@@ -1,0 +1,486 @@
+ After the excursion into the partitioning topic, let's get back to our messaging system
+ design.
+ And here is where we are.
+ We were discussing delivery of messages to consumers.
+ We first covered many different system design concepts that help with reliable data delivery
+ in distributed systems.
+ Remember timeouts, retries, idempotency and requested application, exponential back of
+ an JITAR, different message delivery guarantees, consumer offsets, failover and fallback mechanisms.
+ After that we talked about concepts that help increase performance of distributed systems,
+ and our messaging system in particular, and we discussed batching, compression, partitioning.
+ All these concepts help design reliable and fast communication in distributed systems.
+ Unfortunately, these concepts are not enough.
+ Let's take our messaging system for example.
+ In a push-based system, we may optimize the broker to send messages really fast.
+ But the consumer may not be ready to accept and process these many messages.
+ It is possible to overwhelm the consumer with too many messages,
+ which may lead to degraded consumer performance or a complete failure.
+ And in a pull-by system, one or several consumers may overwhelm the broker with too many requests.
+ This is an instance of a more general problem.
+ The problem will not say there is a web service, and there are clients making requests to this
+ web service.
+ There may be a small number of clients, other services, but they call our web service aggressively.
+ Or there may be many clients, like millions of users, making many concurrent requests.
+ When our web service becomes overloaded, it becomes slow.
+ Request processing takes too much time now, and clients drop requests after the timeout
+ value is exceeded.
+ Clients start to retry, but it won't make things any better.
+ The web service is already overloaded, and retries may only make things worse by increasing
+ the load even further.
+ The web service has to somehow protect itself from overload.
+ Let's see what system design concepts exist to help us solve this problem. Overload happens when existing computational resources are not enough to process all the
+ load.
+ So, let's add more servers to the cluster, right?
+ Making it manually every time the load increases is not the best option.
+ If you do it often, it becomes operationally expensive.
+ Too much manual work.
+ If you do it rarely, then the chances of overload increase, as the cluster may be under provision
+ for long time.
+ And if the cluster is over provision for long time, the dollar cost is high.
+ We just waste money on servers we don't need.
+ Resource capacity estimation is a hard problem.
+ Ideally, we should have a way to automatically add more servers to the cluster when the log
+ goes up and remove servers from the cluster when the log goes down.
+ And this is what autoscaling concept is about.
+ Do you remember when we first brought up the term autoscaling in the course?
+ When we discussed non-fantial, such as scalability and elasticity, hopefully
+ you remember the difference between the two and that we need elasticity for autoscaling.
+ Autoscaling is a popular concept in cloud computing.
+ Autoscaling improves availability, since it is harder to crash or slow down the system
+ with unpredictable traffic spikes.
+ Autoscaling reduces cost, as we only pay for resources we actually need.
+ And autoscaling improves performance.
+ The more servers we have processing requests, the less busy each of the servers is.
+ Hence, the system can process more requests and do it faster.
+ There are three types of autoscaling, also known as scaling policies.
+ Metric based, schedule based and predictive.
+ In metric based autoscaling, performance metrics are used to make decisions on whether to scale
+ or not.
+ We choose a metric, for example CPU utilization, and set a threshold, for example 80%.
+ When service usage exceeds this threshold, meaning that average CPU utilization across
+ all servers in the cluster is higher than 80%, the autoscaling system starts to add
+ more servers to the cluster.
+ Some commonly used metrics other than CPU usage include memory usage, disk usage, request
+ count, active thread count.
+ In schedule-based autoscaling we define a schedule for the autoscaling system to follow.
+ For example, we schedule the cluster to scale out during business hours and to scale in
+ at night and on weekends.
+ In predictive autoscaling machine learning models are used to predict expected traffic.
+ For example, daily and weekly patterns.
+ As in metric-based autoscaling we also choose a metric, for example CPU utilization.
+ But this time, instead of defining a threshold for the metric, we define the target value
+ that the autoscaling system should maintain.
+ For example, we set CPU utilization target to 50%, which means that each server in the
+ cluster should ideally use 50% of CPU.
+ Machine learning models then use historical data for this metric to start making predictions.
+ Models analyze behavior of the metric for the last several days and build forecasts.
+ If models predict CPU utilization increase or decrease in the near future, they trigger
+ autoscaling.
+ Important to note that multiple scaling policies can be used together.
+ For example, metric-based and predictive autoscaling.
+ Metric-based scaling helps scale capacity in response to real-time changes in resource
+ utilization, while predictive scaling helps launch capacity in advance of forecasted load.
+ There are several ways how we can apply autoscaling to a messaging system.
+ For example, we can monitor the depth of the queue, the number of in-flight messages in
+ it and start adding consumer instances when the depth exceeds the limit.
+ When the queue shrinks, we shut down redundant consumer instances.
+ This approach only works for messaging systems that support the competing consumers model,
+ such as RabbitMQ or SQS.
+ Messaging systems that don't support competing consumers, for example Kinesis and Kafka,
+ can apply autoscaling in a different way.
+ As we already know, these systems are based on consumer offsets, and we scale out message
+ consumption by adding partitions.
+ Both Kafka and Kinesis provide APIs that allow to increase the number of partitions for a queue
+ on demand. Although Kafka does not currently support reducing the number of partitions for a queue.
+ Interestingly, the competing consumer's pattern can be used to design an autoscaling system.
+ How? Let's see in the next video.
+ Let's say we have a web service. And our task is to design a system that allows to automatically scale
+ out and scale in this web service depending on the load. We will not go too deep into
+ the design here, but will only outline the main components. So, it is a very high-level
+ design. However, it does provide us with a valuable lesson that we will discuss at the
+ end of the video. Let's think about what components we need.
+ First, the web service has to be integrated with the monitoring system, so that performance
+ metrics, for example CPU utilization of every server in the web service cluster, are constantly
+ reported to this monitoring system.
+ Second, web service operators should be able to specify a bunch of different configuration
+ parameters, such as the metric that needs to be used for scaling and its threshold.
+ Let's call all this configuration an autoscaling rule.
+ Rules web service is a component responsible for handling crowd operations for autoscaling
+ rules.
+ Rules are stored in a database.
+ Third, we need a component that checks all rules periodically to determine rules where
+ threshold is exceeded and scaling is needed.
+ Every minute or more often than that, the rule checker job scans through all the active
+ rules in the database.
+ How it does it is a very interesting problem on its so, as there may be many rules and the job needs
+ to somehow split all the rules into chunks to process rules in parallel.
+ One possible way to implement this is to elect a leader instance in the Rule Checker service
+ cluster.
+ This leader will act as a coordinator responsible for how to partition rules and how to assign
+ each partition to a separate worker for processing.
+ The leader can use consistent hashing for implementing this.
+ Another option does not require a central coordinator.
+ We split rows into a fixed number of partitions, let's say 10.
+ For example, by applying a range partitioning strategy to the rows identifier.
+ We then launch 10 worker machines and assign one partition to every worker.
+ How?
+ Each worker initially tries to claim ownership for every partition.
+ Using the distributed lock mechanism, we guarantee that only one worker per partition will succeed.
+ The first worker to acquire a lock on a particular partition is considered the owner of that
+ partition.
+ As long as the worker keeps the lock, only this worker is allowed to process the rules
+ in this partition.
+ Each worker then iterates over the set of rules assigned to it.
+ For every rule, it takes a metric name specified in the rule, retrieves metric data from the
+ monitoring system, and checks if the threshold has been exceeded.
+ If this is the case, the worker generates an autoscaling event.
+ A task indicating the need for scaling out the fleet.
+ And the worker sends each such task to the component number 4, a messaging system.
+ Next, we need a component for processing tasks in the queue.
+ This component will act as a consumer for the queue and will be responsible for hardware
+ resources allocation.
+ Let's call it a provisioning service.
+ Multiple instances of the provisioning service will process messages from the queue.
+ This is where we can use the competing consumers pattern.
+ If the number of tasks in the message queue is too high, we start more provisioning service
+ instances.
+ When the provisioning service processes a message, it identifies the name of the cluster
+ that needs to be scaled out and starts adding more machines to the cluster.
+ When new instances are started and they are ready to serve traffic, these machines must
+ advertise themselves.
+ So that web service clients know about newly added resources.
+ And this problem is already known to us.
+ This is the classic service discovery problem, right?
+ For example, if we have a load balancer in front of the web service cluster, which is
+ a very common setup, new machines can be registered with the load balancer by the provisioning
+ service.
+ The design outlined here is very high level, but this is already something and we were able to create it with only a basic knowledge of the AutoScaling concept, and more specifically
+ the metric-based scaling.
+ This design is a good starting point for a conversation with the interviewer, and we
+ can now elaborate on it.
+ We already know a lot about messaging systems and can competently conduct a discussion around
+ task producers, consumers and even task queue internals.
+ Later on the course we will cover topics of monitoring, leader election, distributed logs,
+ load balancing.
+ We will talk about various types of databases and how to pick one when designing a system.
+ And we already discussed many system design concepts for building scalable, reliable and
+ fast communication between system components.
+ We can now use all this knowledge to foster a constructive dialogue with the interviewer.
+ I hope this example further demonstrates the power of knowing the fundamental concepts
+ of system design and how to use these concepts as building blocks
+ for solving an ambiguous problem. From the previous video, where we discussed the autoscaling system design, one thing becomes
+ evident.
+ Autoscaling takes time.
+ The monitoring system needs some time to collect and aggregate the CPU usage metric.
+ The provisioning service will take some time to allocate new machines.
+ Time is needed to deploy the web service to these new machines and bootstrap the service.
+ Moreover, these steps are executed sequentially.
+ And until new machines are added to the cluster, the service is in danger of an outage.
+ If there is a sudden large spike in traffic, such as a DDoS attack or a change in client
+ behavior, all machines in the cluster become overloaded and the performance of the service
+ drops dramatically.
+ To avoid this situation, we need to protect the service.
+ And two important concepts that help us do this are load sharing and rate limiting.
+ Let's talk about load sharing first.
+ The idea of load sharing is simple.
+ When the server approaches overload, it starts to drop incoming requests.
+ The goal of load sharing is to ensure all accepted requests are processed, regardless
+ of how much traffic is actually sent.
+ In other words, each server accepts requests until a particular threshold.
+ And drops requests after that.
+ Until more room for requests is available.
+ The question that immediately follows this definition is how to determine the threshold.
+ How to figure out how many requests the server can handle.
+ By running a load test.
+ We generate high load on the server and evaluate how the server handles this load.
+ When CPU utilization or memory utilization or request latency, whatever metric we choose,
+ goes beyond a certain limit, we measure how many requests are being processed at that
+ point.
+ This gives us an upper limit for the request per second rate the server can handle.
+ How to implement load shedding?
+ There are multiple options.
+ Here we should recall the topic of blocking and non-blocking IOs and thread models we
+ discussed back then.
+ We talked about three popular models.
+ Thread-per-connection, thread-per-request with non-blocking IOs and event-load.
+ Likely the majority of client-server applications you will come across in practice use one of
+ these models, or slight variations of it.
+ One way to implement load shading for all three models is to limit the number of connections
+ that the server will accept and process at any given time.
+ When the maximum number of connections is reached, the server may either reject additional connections or the server may accept connections over the limit, queue them up, but not process.
+ By limiting the number of connections, we limit the number of clients that the server
+ can serve at the same time.
+ The second option at our disposal is to limit the number of concurrent requests that the
+ server can handle.
+ For models 1 and 2 this simply means that we limit the number of concurrent requests that the server can handle. For models 1 and 2 this simply means that we limit the number of request processing
+ threads – worker threads.
+ For the event loop model this means that we limit the size of the task queue.
+ And when the queue is full of pending tasks, new tasks are rejected.
+ As we know already, tuning the thread pool size is not always easy.
+ If the thread pool is too big, we risk to use too much memory and spend too much time
+ on context switching, which will lead to performance degradation.
+ If the thread pool is too small, servers are not used efficiently.
+ There may be a lot of spare memory and CPU resources on the machine, but only a small
+ fraction of these resources is used for request
+ processing.
+ Load testing will help uncover both extremes.
+ One more option to implement load sharing is to monitor system performance metrics and
+ start dropping requests when resource utilization approaches a predefined limit.
+ A specific example of load sharing can be found in messaging systems.
+ For instance, RabbitMQ.
+ The mechanism is called consumer prefetch, and it helps avoid overloading the consumer
+ with too many messages.
+ On the consumer side, we can configure a prefetch buffer, that limits how many unacknowledged
+ messages the consumer can receive.
+ When the buffer is full, meaning that the consumer is still working on messages from
+ the buffer, the broker does not push more messages.
+ The broker also removes all prefetched messages from the queue, so that these messages are
+ invisible to other consumers.
+ Once any of the messages in the buffer is processed and acknowledged by the consumer,
+ the broker will push more messages, but never over the limit.
+ The consumer prefetch concept may sound similar to how TCP flow control works.
+ Indeed, conceptually they are very close.
+ The receiver in TCP continually hints the sender on how much data can be received.
+ The sender sends only up to that amount of data and then waits for an acknowledgement
+ from the receiver.
+ This acknowledgement packet contains information about how many more bytes the receiver is
+ willing to buffer for the connection.
+ Wait, wait, wait, I am a little confused here.
+ Originally in this video we talked about server-side protection and how the server drops requests
+ when there are too many.
+ And we call it load sharing.
+ The provided example talks about modifying clients and asking them to slow down their
+ data publishing rate.
+ Which is a bit different concept.
+ And I remember that we used to call it backpressure in the past.
+ Does this mean that these two concepts are the same?
+ I must say that you are a very keen listener if you think along the slides.
+ These concepts are indeed close.
+ And the key difference between the two is whether clients are involved or not.
+ On the server side we implement different protection mechanisms,
+ like load sharing and or rate limiting that we will discuss in the next video.
+ And we may or may not notify the client
+ that some of its data is dropped.
+ But if we choose to notify the client
+ and the client understands the load shedding feedback
+ and is willing to cooperate by reducing the load,
+ we call it backpressure.
+ In other words, load shedding is necessary,
+ but not sufficient for backpressure.
+ If we decide to use load shedding for our system, here are several important considerations.
+ We should not shed the load blindly.
+ The service has to prioritize requests, as some requests are typically more important
+ than others.
+ Load balancers for example initiate health check requests to every service machine, to
+ make sure the service on the machine is up and running.
+ The spin requests must not be dropped.
+ Another example is that requests coming from customers, real people, are more important
+ than requests coming from robot accounts, like search crawlers.
+ Another consideration is that requests have different cost.
+ Some requests are cheap, like data is in the cache and is quickly retrieved from there.
+ Some are expensive, when a heavy calculation has to run.
+ We can drop for example expensive requests to save CPU cycles.
+ When queuing requests we typically think about FIFO queues.
+ First in, first out.
+ Requests that arrived earlier to the service are processed first. With load shading in place, LIFO last in first out might be a better option.
+ If the service is already very busy processing requests, it is better focused on processing
+ more recent requests than old requests.
+ A user probably tired waiting for the response and refreshed the page in the browser.
+ So, the old request is no longer relevant.
+ And in general, if some request was sitting in a queue for a long time, the client most
+ likely timed out already.
+ No need to process this request.
+ But how does the server know if the client has timed out?
+ The trick is to use a timeout hint.
+ When sending a request, the client also includes a timeout value.
+ How much time the client will be waiting before timing out and retrying the request.
+ The server then evaluates this hint and drops the request if expired.
+ One last consideration is autoscaling.
+ We should be careful introducing both autoscaling and load sharing for the servers.
+ It's ok to have both, but they need to be properly configured and tested.
+ The potential problem here is that load sharing mechanism can disable autoscaling.
+ For example, we configure autoscaling to start launching new instances when CPU usage goes
+ beyond 70%.
+ But load sharing may not allow CPU to reach the threshold. CPU usage grows, for example up to 60%, and then low-chading starts to drop requests.
+ And CPU utilization stabilizes at this level, and never goes up.
+ So, instead of adding more capacity and serving more requests, the service just drops data.
+ The proper way to combine both concepts is to configure a lower threshold for auto-scaling
+ and a higher threshold for low sharing.
+ This way the system can start to scale out as soon as the auto-scaling threshold is reached.
+ If additional resources are not available quickly enough and low sharing threshold is
+ reached, only then we start to drop requests. A load trading solution evaluates the state of the entire cluster or a specific node machining the cluster to make a decision.
+ This helps to protect the system and to ensure that at least the most important requests
+ are processed.
+ But relying only on the state of the system makes this concept a little unfair.
+ Let's clarify.
+ Imagine two clients A and B sending request to the service.
+ The service is protected with a load shader.
+ Only 10 requests per second can be processed.
+ Requests over this limit are dropped.
+ Client A sends 1 request per second on average, while client B sends 20.
+ Maybe on purpose or maybe by mistake.
+ The load shader does not evaluate who makes requests, it is only the total number of requests
+ that matters.
+ So, the load shader starts to drop requests. And client A may
+ easily get impacted. The assembly request may be rejected. But this is not client A
+ who overloads the service, it's client B. Not cool, right? This is a so-called noisy
+ neighbor problem. In a multi-tenant system, a system where common resources are shared
+ by multiple clients, it is important to guarantee a fair allocation of resources.
+ How would you solve this problem?
+ Please take a moment to think about it.
+ Believe me, you already have enough knowledge to make a good progress in solving the problem.
+ Give it a try and come back.
+ I will wait for you here.
+ Ok, now it's my turn.
+ Let me try to brainstorm this problem as if I saw it for the first time.
+ And I will base my third process on the concepts and ideas mentioned earlier in the course.
+ On the one hand, we need to limit the total number of requests coming to the system, to
+ protect the system.
+ On the other hand, we must guarantee each client their share of the total resources.
+ What if we just split the total request limit between all clients?
+ Or in other words, we introduce a limit quota for each individual client.
+ Each client now can send no more than n requests within a certain interval of time.
+ And all requests over the limit are dropped.
+ Client A can now safely submit their one request.
+ And be sure that this request will not be rejected, because client B sends too many
+ requests.
+ By the way, this is what the Request-Rate Limiting concept is about.
+ Also referred to as Request-Rate Limiting.
+ Rate limiting controls the rate of requests sent or received on the network.
+ And it does it on the per-client basis.
+ So our goal is to come up with a solution to the rate limiting problem.
+ What is not clear to me at this point is how long the time interval should be, and how
+ to deal with the fact that requests can be different in nature.
+ Typically, some requests are cheap to process, while others can be very expensive.
+ We must somehow take this into account.
+ Probably by introducing a cost for every request.
+ But I am not yet sure.
+ For now, let me make a few assumptions.
+ I will set the time interval to something reasonable, like 1 second.
+ And later I will think about how to make it configurable.
+ As for the cost of requests, let's assume for now that all requests are equal.
+ This random guy on the Internet advised me to start my design with something small and
+ simple.
+ And I am going to listen to him.
+ Sisten.
+ So, I'll experiment with one server first. We have one server processing requests
+ from many clients. For every client we need to count how many requests were made every
+ second. When this number reaches a particular limit, no more requests from this client are
+ accepted till the end of that second. Why do we store request counters? Two options immediately come to mind.
+ Memory, and more specifically a local in-memory cache, or disk, and more specifically an embedded
+ database.
+ Since the data is short-lived and we probably don't need to persist it, and we need to access
+ it quickly, we should store counters in memory, in a local cache.
+ Unique client identity fire, for example username, email, IP address, etc. is the key, and the
+ total number of requests made so far is the value.
+ We also need to store time somewhere, the identifier of the second when the request
+ was made.
+ We can add this identifier to the key, or store it along with the counter.
+ Both options have pros and cons I am sure, and if I have time I will analyze both.
+ For now, let me stick to the first option and see where it takes me to.
+ So here we are.
+ When a request comes, we identify the client and retrieve the client's request counter
+ from the local cache.
+ Then we check if the limit has been reached.
+ If yes, we reject the current request.
+ If no, we increment the counter and update the cache value.
+ So far so good, and the moment you start to like your design, it's time to start changing it.
+ This will either further confirm the validity of your ideas,
+ or it will indicate that we
+ need to look for something else.
+ At least two problems are evident.
+ Concurrency and cache size.
+ Concurrency can become a problem if we use a thread prerequest model, and two different
+ threads try to modify the same cache entry.
+ The cache size may become an issue since we generate many keys.
+ A new key for each client every second.
+ To solve concurrency issues, I will use logs or atomic variables.
+ To solve the cache size problem, I will rely on LRU eviction policy or time-based expiration
+ or both.
+ LRU eviction policy may work very well for our use case.
+ Keys for past seconds are no longer used by the server, and the cache will delete such
+ keys first.
+ Time-based expiration will help to delete many other old keys that are no longer in
+ use.
+ I should also note that active expiration, when we have a background thread that runs
+ at regular intervals and removes expired entries, will be more effective than passive expiration
+ when entries are removed from the cache during reads and drawings.
+ Since I don't see any major flaws in the single server scenario, I feel like I am ready
+ to make the picture a little more realistic and add another server to the service cluster.
+ So that too servers process requests now.
+ What does it change?
+ Let's see.
+ Requests from the same client will now go to either of two servers.
+ The load balancer is responsible for distributing requests evenly among the servers.
+ Which immediately suggests that we can try to divide each client quota by the number
+ of servers in the cluster.
+ In this case two.
+ At first glance, this seems like a good option.
+ It is easy to implement and maintain.
+ It allows us to reuse the rate limiting solution we created for a single server.
+ Yes, when servers join or leave the cluster, we must promptly notify all other servers
+ of the cluster size change.
+ But this is a known problem.
+ The problem of how to timely share a piece of relatively static information with all
+ stakeholders, such as other servers in the cluster or other systems.
+ We looked at several options for how to do this when we talked about partitioning and
+ request routing.
+ We can use the configuration management tools and deploy this value directly to each server
+ in the cluster. We can use a database or an object storage and pull data from there periodically.
+ We can use the gossip protocol.
+ Unfortunately, the fact that load balancers distribute requests evenly among servers does
+ not guarantee that all requests from the same client are distributed uniformly.
+ Here is a very simple example that demonstrates this.
+ If the client quota is high enough, this won't be a big problem.
+ But if the quota is low, some servers will start slaughtering requests long before the
+ quota is reached.
+ What is more, if our load balancer balances connections and not requests, some persistent
+ connections may be used to transfer considerably more requests than others.
+ All these problems tell me that the proposed simple design option is a good first step,
+ but we should try to look for and evaluate other ideas.
+ Let's take a closer look at the last example.
+ Maybe it will give us some clues.
+ And in general, using small concrete examples to generate ideas is a good strategy.
+ Since different servers may handle different number of requests for the same client, what
+ if all servers periodically share with each other the number of requests they received?
+ This way, each server will know the total number of requests received by the entire
+ cluster from every client.
+ With every next request from the client, each server will compare the total request count
+ with the quota and make a struggling decision.
+ How do we share this highly dynamic data across the cluster?
+ We already know several options for how to do this.
+ One option is to rely on gossiping.
+ We know how to discover peers in the cluster using either a service registry or seed nodes
+ advertised by DNS.
+ Servers can then exchange request count one or several times per second using either TCP
+ or UDP network protocol.
+ Unfortunately, this solution does not scale well for large clusters with many clients,
+ as the cost of communication increases with every new server
+ added to the cluster.
+ Alternatively, we can use a shared cache and all servers will report their partial counts
+ to the cache.
+ As we know already, by using hash partitioning and consistent hashing we can create a highly
+ scalable, performant and reliable distributed cache solution.
+ One more important aspect to mention is what clients should do with throttled requests.
+ And there is nothing new here either, we already discussed all the concepts we need.
+ Retries with exponential back-off in Jitter, fallback, request batching.
+ Let me please end this thought experiment right here.
+ Hopefully, I've been able to convey a key message.
+ By using fundamental concepts of system design and constantly asking ourselves questions, we've been able to demonstrate good progress towards solving an ambiguous problem.
+ And I understand if you are a little skeptical about this example.
+ It's hard to believe that we can design even something close to a real
+ production system in 10 minutes using only conventional knowledge. Still, it's true.
+ Of course, many details have been left out of the thought process.
+ But the high-level ideas discussed are what several real-world systems actually use.
+ For example, Yahoo and AWS. Gossiping and distributed cache are two popular approaches
+ for implementing rate limiting in the industry. The only big difference between the ideas we have discussed here
+ and what real systems use is the way requests are counted in the cache. There are algorithms that allow to use only a single keeper client in the cache.
+ One such popular algorithm is called token bucket.
+ And if you want to know more about how this algorithm works, please check out this video
+ on my YouTube channel.
+ Here on the slide I have collected all the concepts that we either explicitly mentioned
+ or implied while designing the rate limiting solution.
+ We have discussed most of them in the past, and will discuss the rest in the future.
+ As you can see, there is a lot to talk about with your interviewer or teammate when discussing
+ the problem of rate limiting.
+ Feel free to brush up on these concepts by revisiting corresponding videos in the course.

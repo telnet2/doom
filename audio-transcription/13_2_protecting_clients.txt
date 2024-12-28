@@ -1,0 +1,292 @@
+ I want to tell you two stories.
+ One story about a bad service.
+ And another story about a bad client.
+ Let's start with a service.
+ What is a bad service?
+ Different people will give you different answers.
+ Some might say that a bad service is one that doesn't work.
+ One that doesn't know how to withstand faults.
+ One that doesn't know how to quickly recover from failures.
+ Or one that doesn't always return accurate results.
+ One that loses data from time to time.
+ One that doesn't know how to scale quickly.
+ One that returns unpredictable results.
+ One that is hard to maintain, poorly tested or not secure.
+ There can be many correct definitions of a bad service.
+ My favorite is one that is slow.
+ And more specifically, when the service gets slow sometimes.
+ When the service is fast enough most of the time, and suddenly out of nowhere the request
+ latency goes up and the throughput goes down.
+ There can be many triggers for this behavior.
+ For example, hardware problems when some machines in the cluster become slower than its peers,
+ or network issues in one of the data centers, or caused by user behavior when some users
+ start to run many expensive wide-range search queries.
+ The main problem with slow services is it is hard to find the root cause of the issue.
+ When the service is broken and an exception is wrong, we can identify the problem rather quickly.
+ When everything works, but works slower than expected, we must turn to black magic to find the root cause.
+ Troubleshooting becomes hard, rather than following some well-defined runbooks.
+ It is bad when a system fails, but when it fails it is better to fail fast than to fail
+ slow.
+ In software development there is even a principle called fail-fast.
+ When faults occur in the system, this principle encourages to fail immediately and visibly.
+ And this principle is applicable not only to system design, but to object-oriented design
+ as well.
+ Let me share with you a few examples.
+ When creating an object and initializing its state in the constructor, we better throw
+ an exception if cannot initialize the state completely.
+ And if no more changes to the state are expected, we should make the object immutable.
+ Immutable objects are simpler to understand and they are more secure than mutable objects. They also start safe, as multiple threads cannot change the state
+ of the object concurrently. Another example of the fail-fast principle in object-oriented programming
+ is when we implement preconditions for input parameters in a function.
+ One more example is when we need to set configuration parameters when service starts.
+ Typically, we load a configuration file and read properties from it.
+ When some property is not configured in the file, we have two options.
+ We can throw an exception immediately, saying that the property is not found, or we can
+ set some default value and continue the service startup process.
+ The fail-fast principle tells us throw the exception and stop right there.
+ If we don't follow this rule and rely on default values, we can easily find ourselves in the
+ situation when the service works well in some environments, for example some geographical
+ regions, because configuration property is present there, while the service works differently
+ in other environments.
+ Web property is not present and the default value is used.
+ The last example is about request handling.
+ When request parameters are not valid, the fail-fast principle teaches us to throw an
+ exception back to the client and do not try to silently correct request parameters and
+ continue handling.
+ By the way, the fail-fast philosophy is applicable to business as well, and is highly adopted
+ within startup culture, when some idea or business strategy is extensively tested first,
+ and if testing reveals something isn't working, the business cut losses and quickly move to
+ the next idea.
+ So, it is hard to troubleshoot and debug slow services.
+ But this is not the only problem.
+ Slow services kill.
+ They kill themselves, and they kill their callers, clients.
+ The following example will help clarify the statement.
+ We talked about notification systems a few times in the past, when we discussed blocking
+ queues and when we discussed large-scale
+ push architectures.
+ We mentioned back then that one of the ways to implement a notification delivery service
+ is to use a blocking queue that stores ready-to-send notifications.
+ A bunch of sender threads read these notifications and push them, let's say synchronously, to
+ API gateway instances, which will deliver notifications to client
+ devices.
+ Each sender thread picks a message from the queue, identifies an API Gateway instance
+ the receiver of this notification is connected to, and sends the message to that instance.
+ All works well.
+ Till the moment one of the API Gateway instances becomes slow.
+ Instead of processing every message within 5 milliseconds as before, it now takes 100
+ milliseconds.
+ Every time one of the threads needs to send a message to the slow consumer, the thread
+ will freeze for 100 milliseconds.
+ This way a single slow consumer will slow down all sender threads one by one, which
+ can lead to one of the following two scenarios.
+ The first scenario is when message consumption is slowed down significantly, the queue is
+ filled up, and sender service resources are exhausted.
+ This can degrade the performance of the sender service, which will create backpressure on
+ message producers, causing them to slow down or even crash.
+ This situation, when problems in one system cause problems for its callers, is called
+ a cascading failure.
+ The second scenario is when the sender service identifies and isolates the slow consumer,
+ so that no more messages are sent to it.
+ For example, the sender service implements the circuit breaker pattern.
+ All sender threads now focus on the remaining consumers, sending more messages to each of
+ them.
+ This puts additional pressure on the remaining consumers and may cause consumers to fail
+ one by one.
+ This situation is known as chain reaction, and we saw this already when we discussed
+ load rebalancing using a consistent hashing algorithm.
+ Chain reaction occurs within one part of the system, whereas cascading failures occur between
+ different parts of the system or between different systems.
+ A chain reaction failure can result in a cascading failure.
+ How do we solve these problems?
+ To avoid cascading failures, clients need to protect themselves.
+ Which basically means clients have to convert slow failures into fast failures, and or identify
+ and isolate bad dependencies.
+ And here were concepts like timeouts, circuit breaker, health checks, and the bucket pattern
+ come on stage.
+ To avoid chain reactions, servers have to protect themselves.
+ And we already know how they achieve this.
+ Concepts such as load sharing and auto-scaling help.
+ We also need to constantly monitor servers and timely replace the failed ones.
+ We need to test the system using techniques such as chaos engineering to make sure servers
+ are resilient to sudden failures of their peers.
+ The bulkhead pattern can also help in this case.
+ So what is this mysterious bulkhead pattern that helps protect both clients and servers?
+ Let's see in the next video.
+ The idea of the bulkhead pattern is simple.
+ We need to partition resources into groups of limited size and isolate groups, so that
+ when failures happen and resources are exhausted, only a limited number of groups are impacted.
+ And other parts of the system continue to function normally.
+ To better remember this pattern, think of a ship.
+ A bulkhead is a wall within a ship.
+ It separates compartments.
+ If a ship's hull is damaged and the water fills up one of the compartments, the ship
+ doesn't sink.
+ By the way, the Titanic sank because its bulkheads had a design failure.
+ The water poured over the top of the bulkheads by the deck above and flooded the entire hull. Let's apply this idea to the notification sender service we discussed in the previous
+ video.
+ Instead of having a single thread pool of message senders, we should create several
+ smaller thread pools, where each pool sends messages to a subset of all consumers.
+ Now if some consumer becomes slow and exhausts all message sender threats in its pool, other pools
+ continue to function as normal and deliver messages quickly to the remaining consumers.
+ We can find the bulkhead pattern in many distributed systems.
+ Let's see some more examples of where and how to use it.
+ The bulkhead pattern is often used in a service that has multiple dependencies.
+ The blockhead pattern is often used in a service that has multiple dependencies. For example, to complete a purchase request, the order service has to first call the inventory
+ service to check for product availability, and then call the payment service to build
+ the credit card.
+ We don't want the order service resources to be fully consumed by single degraded dependency,
+ and the blockhead pattern will help with that.
+ The order service can use one of three ways to implement the blockhead pattern.
+ Limit the number of connections to each dependency.
+ Limit the number of concurrent requests to each dependency by counting requests.
+ And limit the number of concurrent requests to each dependency by creating peer-dependency
+ thread pools.
+ In the first option we set up a separate connection pool for each dependency, and specify the
+ maximum number of connections in each pool.
+ When all connections in the pool are busy with handling other requests, the client will
+ not create a new connection.
+ This ensures that only a limited number of worker threads are used to call any given
+ dependency.
+ In the second option, we count how many simultaneous requests are made to each dependency.
+ We can use semaphore to count concurrent calls.
+ When the limit is reached, all new requests to that dependency are immediately rejected.
+ In the third option, we create a separate thread pool for each dependency.
+ Worker threads now hand over all requests to a corresponding thread pool.
+ Each thread pool has a fixed size, which ensures that only a limited number of worker threads
+ can call any given dependency.
+ The first option is the simplest to implement.
+ Typically, this is just a configuration setting in the client.
+ And if we trust the client, this is the option to choose.
+ The question of trust is important here.
+ Let's talk more about this.
+ Each service can provide its own client library.
+ And libraries are changing all the time.
+ Client libraries will have bugs, their performance characteristics may change, how the handle
+ connections may change.
+ Therefore, service teams may choose to treat each client library as a black box.
+ And here is where options 2 and 3 help.
+ They somewhat help protect applications from problems in client libraries.
+ Thread pools in option 3 provide maximum isolation, but they add computational overhead.
+ Option 2 is a middle ground.
+ It is less computationally expensive, but also less flexible.
+ For example, it does not allow to time out requests and walk away.
+ A worker thread will remain blocked until the underlying network call times out.
+ As such, option 2 still requires us to trust the client library in some aspects.
+ As mentioned at the beginning of this video, the whole idea of the bulkhead pattern is
+ to divide resources into groups of limited size and isolate groups.
+ It is important that groups have limited size.
+ If we want to build a reliable system, we should strive to have everything
+ bounded. Queues, thread pools, message payload sizes, workload execution time. We need to
+ shape traffic. We need to impose request rate limits. Yes, finding all these limits can
+ be tricky. In addition, these limits need to be revised from time to time. This means
+ that we need to periodically load test and stress test the system, as well as
+ test different failure modes.
+ But let's leave this topic for a separate discussion, when we cover testing and operational
+ excellence in distributed systems. In the previous video, we discussed how the bulkhead pattern can help protect clients
+ from bad servers.
+ In this video, let's take a look at how this pattern helps protect servers from a bad client.
+ What is a bad client?
+ The one that makes servers suffer.
+ For example, by creating a flood of requests, a way more than a typical client. Or by sending very expensive requests.
+ Or by generating poisonous requests.
+ Requests that can crash the server because of some bug in the code.
+ This doesn't necessarily mean a malicious client trying to deduce our service, or compromising
+ it in any other way.
+ The client may be another popular service, and it is experiencing a sudden surge in traffic.
+ Or developers of that service started running a load test.
+ Or it's a new client with a specific request pattern that hasn't been observed before.
+ In fact, the reason for the client's behavior doesn't really matter.
+ The important thing is that servers suffer from this behavior.
+ This can lead to a chain reaction and shutdown of the entire service.
+ We have previously discussed server protection mechanisms, such as load sharing and rate
+ limiting, to deal with this kind of problems.
+ Are these mechanisms not enough?
+ Wouldn't they protect the service from a bad client?
+ They will protect the servers, but only to a certain extent.
+ A distributed system is a living organism that changes over time.
+ We continue to add new features to it, find and fix bugs, we update software dependencies,
+ we change the hardware profile to more efficient or less expensive servers, we apply security
+ patches and more.
+ All of this can and will alter system capacity.
+ And the load shader and rate limiter we configured a year ago
+ may no longer fully protect us today.
+ The idea of bulkheads gives us one more tool to improve service resilience
+ a concept called shuffle sharding.
+ Let's say we run a service using a cluster of 8 servers.
+ And there are many clients,
+ end users or other services.
+ In a classic setup, each server handles requests from any of the clients.
+ For example, we have a load balancer that spreads traffic evenly across all servers.
+ This gives us efficiency and redundancy, since all servers are utilized evenly, and if some
+ server fails, the load balancer takes
+ it out and the remaining servers keep processing requests.
+ Now a bad client enters the stage.
+ Whether on purpose or not, it takes the servers down one by one, making the servers unavailable
+ to all clients.
+ One hundred percent of clients are impacted.
+ How to avoid this?
+ The idea of bulkheads teaches us to divide resources into groups of a fixed size and
+ to isolate groups.
+ So, let's divide the fleet into four shards, with two servers in each shard.
+ As a result, all requests for each individual client are now processed by its own shop.
+ Nothing new here, we just use the idea of partitioning we discussed in the past.
+ And this should not be surprising.
+ When you think about this, the concept of bulkheads and partitioning are based on the
+ same idea – to split the whole into parts.
+ The main difference between the two is that the bucket pattern is mainly about availability,
+ whereas partitioning is mainly about scalability, plus improved performance and availability
+ as two additional bonuses.
+ With sharding in place we are now able to reduce the scope of impact, a so-called blast
+ radiance.
+ A bad client will only kill its own shard, two servers at most.
+ Other shards stay intact.
+ And this is much better than before, as now only 25% of clients are impacted.
+ But that is still a lot.
+ The service is not available for 25% of good but unlucky clients who were assigned to the
+ same shard as the bad client.
+ Let's see how we can help for the good clients here.
+ And the trick is how we assign clients to shards.
+ The following simple example will help get the idea.
+ Let's say we have 8 clients, with identifiers from 1 to 8, and we use a very simple client
+ to shard assignment strategy, a mode function.
+ We take a client's identifier with hash, divide it by the number of shards and take a remainder.
+ This will give us the following assignments of clients-to-shards.
+ If the first client for example appears to be a bad one, the fourth shard dies, and client
+ flag is also impacted.
+ This is what a very straightforward assignment gives us, the 25% blast radius.
+ Now, let's assign clients to servers at random.
+ We might get something like the following.
+ The first client now lives with clients 4 and 7.
+ But in this case, if these two servers are down due to a bad client behavior, there are
+ two other healthy servers, 6 and 8, and they will now process requests from clients 4 and
+ 7.
+ And this is what the Shuffle Sharding concept is about.
+ Sharding because we split the cluster into shards.
+ And shuffling because we shuffle clients, so that if any two clients live together on
+ one shard, there is another shard where these clients don't live together.
+ Here are a few important things to note about shuffle sharding.
+ First, and I am sure you have already thought about this, it is not always possible to isolate everyone from everyone.
+ Otherwise, each client has to have its own dedicated shard, which is not possible for
+ the service having for example millions of clients, users.
+ So, there will be an overlap, when some two clients are assigned to the same set of servers.
+ And these two clients can impact one another.
+ But the chance of being impacted decreases dramatically with more servers we have in
+ the cluster and more servers we have in the shop.
+ Here are some specific numbers.
+ Second, clients need to know how to handle server failures.
+ In particular, they need to set short timeouts, if possible, and retry failed requests.
+ Chances are high that the retried request will be forwarded to a different server, the
+ one that is not impacted by the bad client.
+ Third, shuffle sharding requires an intelligent routing component.
+ The one that knows about all servers, the one that can quickly identify a failed server
+ and failover to the remaining healthy servers, based on shuffle sharding assignments.
+ We can incorporate this logic into the client library, or we can implement a dedicated shuffle-sharding-aware
+ request router.
+ Fourth, we can assign clients to shuffle shards in either a stateless or stateful manner.
+ More stateless means that when assigning a client to a shuffle shard, we don't look back
+ at existing assignments.
+ Such an algorithm can be easily implemented, but there are less guarantees about overlaps.
+ Whereas stateful means we use a datastore to record every shuflshard as they are assigned.
+ And during every new client assignment we look at all existing shuflshards and choose
+ the next available shuflshard so that it minimizes overlaps.

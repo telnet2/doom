@@ -1,0 +1,165 @@
+ Systems that shape incoming traffic using load shedding and rate limiting are known
+ as admission control systems.
+ When a client's request is rejected by either a rate limiter or a load shedder, such systems
+ usually return back an exception.
+ Two common response status codes are 49, too many requests, and 503, servicing available.
+ The client is expected to gracefully handle responses with these status codes.
+ And in the previous video we listed the options available.
+ The client should also remember to log the exception and emit a metric.
+ We will discuss logging and monitoring in detail later on the course.
+ One thing the client should avoid when it sees these codes is an immediate get-write.
+ The service is already overloaded, and sending more requests to the service is counterproductive
+ and only makes things worse.
+ Retrying with exponential backoff on Jitter is a much better option.
+ First, delays between retries will give the service time to scale out.
+ Second, Jitter will help distribute requests more evenly.
+ But what if the service is not elastic and it won't scale quickly?
+ What if the service is overloaded and becomes slow or completely unavailable for an extended
+ period of time?
+ As smart as the retries are, they won't help.
+ What we see here is the instance of a more general problem.
+ The problem with the failure of the service is not transient, and the service cannot recover quickly.
+ The client may think that the problem is transient and that retries will eventually succeed.
+ But instead, the client may queue up a large number of original requests along with retries,
+ exhaust client-side resources and crash.
+ Let's elaborate on this. along with retries, exhaust client-side resources and crash.
+ Let's elaborate on this.
+ Remember when we discussed blocking and non-blocking IO?
+ Back then we looked at things from the server's perspective.
+ But clients can also be built on either blocking or non-blocking IO.
+ Let's say we have a client application inside which one or more threads are running.
+ When the client application needs to send a request to the server, each thread either
+ establishes a new connection or reuses an existing connection from the pool of persistent
+ connections and executes IOP operations.
+ In case of the blocking IOP model, the thread is blocked, waiting for IOT to complete.
+ Simply put, the thread is blocked until the response is available.
+ If the client needs to send multiple concurrent requests to the server, we need to create
+ multiple threads inside the client application.
+ And each thread will create and use its own connection.
+ To create and manage connections, we use various client libraries.
+ For example, Apache HTTP client.
+ Blocking IO clients are also called synchronous.
+ In case of a non-blocking IO client, application threads do not use connections directly.
+ Instead, threads send requests to the request queue.
+ A single IO thread de-queues requests from the queue, establishes a new connection or
+ obtains one from the pool, and streams request data out using that connection.
+ When any of the responses comes back, the application is notified and one of its threads can then process the response. As you can see, the non-blocking IO client is more complex,
+ as it takes care of request queue, the IO thread and connection management.
+ But a single thread now can handle all the IO.
+ And if the client application needs to make many concurrent requests, it no longer needs
+ to allocate a separate thread for each request.
+ Non-blocking IO clients are often referred to as asynchronous clients.
+ One of the advantages of asynchronous client is its simplicity.
+ It is easier to write, test and debug applications that use synchronous clients.
+ And if a client makes a small number of concurrent requests, a synchronous client can have lower
+ latency.
+ Asynchronous clients on the other hand guarantee higher throughput if the client has to make
+ many concurrent calls.
+ This property also enables asynchronous clients to be more efficient in handling traffic spikes,
+ as there will be more concurrent requests on the client side during assertion traffic.
+ Asynchronous clients are more resilient to server outages and degraded server performance.
+ When the server is unavailable or overloaded, the client may start piling up failed requests
+ and retry them.
+ And piling up requests in the queue is much cheaper than piling up failed requests and retry them. And piling up requests in the queue
+ is much cheaper than piling up threads. As you may see, the key difference between
+ a blocking and a non-blocking IO client is how it handles concurrent requests produced by the client.
+ Non-blocking IO clients can handle many more concurrent requests.
+ And here comes an interesting question. How many concurrent requests a typical client generate?
+ For example, when watching this video, your browser acts as a client.
+ Does it produce many concurrent requests?
+ No.
+ If you recall our discussion of video streaming over HTTP,
+ your browser just retrieves a video segment every few seconds from a CDN.
+ And there is no need in concurrent
+ requests at all. But the server that serves your requests calls a bunch of other systems along the
+ way. For example, a video metadata cache service. The server acts as a client for these systems.
+ And when thousands of viewers hit the server at about the same time, it will need to forward
+ thousands of concurrent requests to its dependencies.
+ And this is where it becomes important how clients deal with concurrency.
+ Now, if we take the popular thread per request model and put together everything we have
+ discussed about blocking and non-blocking servers and clients, we can get the following
+ picture of a typical service with downstream dependencies.
+ A non-blocking IO server, a pool of workers rights for request processing, and a blocking
+ IO client to call dependencies.
+ And here is a version with a non-blocking IO client.
+ Both architectures are very popular these days, although it looks like the industry
+ is gradually moving towards non-blocking IO everywhere.
+ These two pictures help explain why problems on the server side may cause problems on the
+ client side when one system calls the other.
+ When any of the caller system dependencies becomes unavailable or slow and the problem
+ is not transient, the client's resources start to exhaust.
+ Because we either excessively block worker threads, as in the case of a synchronous client,
+ or we queue up requests in the request queue, as in the case of an asynchronous client.
+ And deleteRise only makes sense worse.
+ Asynchronous clients handle this situation a little better than synchronous clients.
+ But both models are vulnerable, it's just that asynchronous clients have a higher tolerance level.
+ And if you are wondering whether the event loop model is free from these problems, it's not. It is just that asynchronous clients have a higher tolerance level.
+ And if you are wondering whether the event loop model is free from these problems, it
+ is not.
+ Sooner or later the task you will fill up.
+ No matter which thread model we use, if the incoming traffic rate is higher than the outgoing
+ traffic rate, the backlog of pending requests will grow and eventually overflow.
+ What would be good in this situation is for the client to stop sending requests completely
+ for a short period of time.
+ This will reduce resources consumption on the client side and will allow the service
+ to recover faster in the event of a system overload.
+ And this is what the circuit breaker pattern is about, which we will talk about in the next video. you When a client sends request to a server, the circuit breaker counts the number of failed
+ requests.
+ And when this number exceeds some pre-configured threshold, the client concludes that the failure
+ is not transient, and stops calling the server for a while.
+ This helps preserve client resources and gives the server time to recover from an overload.
+ To better remember this pattern and how it works, think of an electrical switch.
+ When the switch is open, the circuit path is open, and no data flows through.
+ When the switch is closed, a continuous path is created, and data is allowed to flow.
+ We usually don't implement the circuit breaker pattern from scratch, but use well established
+ open source libraries that implement it.
+ For example, Resilience4j or Polly.
+ In its simplest form, to configure a circuit breaker we need to specify three parameters.
+ A type of the exception that the circuit breaker monitors, the number of exceptions before
+ the circuit breaker opens and how much time the circuit breaker remains open.
+ For example, the following configuration means that the circuit breaker
+ will open after 5 consecutive too many request exceptions, and it will remain open for 1
+ minute.
+ The easiest way to understand how a circuit breaker works is to model it with a state
+ machine. Please don't worry, it's really simple. A state machine is an abstraction
+ that helps to design algorithms. The building blocks of a state machine are states and transitions.
+ And we use boxes and arrows to draw state diagrams.
+ A state machine is a compact way to represent a set of complex rules.
+ Let's take a look at the circuit breaker state machine.
+ We have three states, closed, open and half-open.
+ Initially the circuit breaker is in the closed state.
+ It allows request to pass through and hit a remote service.
+ When request start to fail and the number of failed requests exceeds a certain threshold,
+ the circuit breaker moves to the open state.
+ While in this state the circuit breaker does not allow requests to pass through.
+ It immediately returns an exception.
+ The circuit breaker remains open for the configured duration, and transitions to the half-open
+ state after the timespan.
+ In the half-open state, one request will be allowed to pass through.
+ It's a trial request.
+ There are three possible outcomes for this request.
+ The circuit breaker gets back an exception it monitors.
+ It means the downstream service is not yet ready to serve the traffic.
+ The circuit breaker transitions back to the open state immediately, and it remains in
+ the state for the configured timespan.
+ If the circuit breaker gets back a success result, it transitions to the closed state.
+ The world is happy again.
+ The circuit breaker may also receive some other exception, not the one at monitops.
+ In this case, it remains in the half-open state, and tries one more trial request.
+ Here are a few things to consider when using the circuit breaker pattern.
+ Some modifications of the circuit breaker algorithm do not use a timer to determine
+ when to switch to the half-open state.
+ Instead, the circuit breaker pins the service periodically to see if the service is available.
+ The service exposes a health verification endpoint, and the client monitors the service's
+ health by calling the endpoint.
+ The circuit breaker instance has to be thread-safe.
+ When multiple threads on the client side call the service, they all need to share the same
+ circuit breaker instance, since we want to measure the rate of failed request for the
+ client as a whole and not for each individual thread.
+ Hence, the circuit breaker has to use a locking mechanism while reading and recalculating
+ its state.
+ What do we do with requests rejected by the open circuit breaker?
+ Pretty much the same we do for all other failed requests.
+ Which is one of these actions.
+ Buffer, failover, callback, apply backpressure up the stack, cancel.
+ And all these actions are already known to us, I have nothing new to add here.

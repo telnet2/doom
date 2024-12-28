@@ -10,6 +10,9 @@ def main():
     input_audio_file = sys.argv[1]
     output_text_file = sys.argv[2]
 
+    print(f"Processing {input_audio_file} to {output_text_file}")
+
+
     # 1. Load the processor
     processor = AutoProcessor.from_pretrained("openai/whisper-medium.en")
 
@@ -44,9 +47,9 @@ def main():
         for chunk in result["chunks"]:
             start_time, end_time = chunk["timestamp"]  # [start, end] in seconds
             text = chunk["text"]
-            line = f"{start_time:.2f}s - {end_time:.2f}s: {text}"
+            # line = f"{start_time:.2f}s - {end_time:.2f}s: {text}"
             # Print to console  
-            print(line) 
+            # print(line) 
             # update the line to be just the text
             line = f"{text}"
             f.write(line + "\n")   # Write to file

@@ -1,0 +1,632 @@
+ Let me remind you that we now discuss system design concepts that help process more messages
+ and do it faster.
+ Or in other words, we are talking about scalability and performance.
+ Batching and compression concepts discussed in previous videos help increase performance.
+ But even with these mechanisms in place, at some point we will hit the limit of how many messages
+ a single consumer can process.
+ And when this limit is hit, we have two options.
+ Scale consumers vertically or scale them horizontally, where vertical scaling simply means we use
+ a more powerful consumer machine, while horizontal scaling means we have multiple consumers competing
+ for messages.
+ You already know all this. While horizontal scaling means we have multiple consumers competing for messages.
+ You already know all this.
+ What are the benefits of having a single consumer?
+ The biggest one is that the order of message processing is preserved.
+ The consumer receives a message, processes it, then receives the next one from the queue
+ and so on.
+ Messages are processed in order.
+ I will show in a minute why this is no longer the case when multiple competing consumers
+ are involved.
+ Among the drawbacks of having a single consumer we should mention availability.
+ It is a concern because the single consumer will fail one day.
+ And messages will stay unprocessed until we failover to a new consumer.
+ More typical scenarios of the consumer being unavailable include network partitions and
+ consumer application restarts.
+ Multiple competing consumers help to deal with these issues.
+ Even when one consumer becomes unavailable other continue processing messages.
+ But the order of processing is no longer guaranteed in this case.
+ And what's more, the chances of processing the same message multiple times increase.
+ Let me demonstrate problems with the processing order and double processing using a few examples.
+ Please note that both pool and push-based systems have these problems.
+ For the first example, let's take a push-based system, like RabbitMQ.
+ We have three messages in the queue, A, B and C. And we have two consumers, 1 and 2.
+ The broker distributes messages in a round-robin fashion, which means the first message goes
+ to the first consumer, the second goes to the second, the third message goes to the
+ first consumer and so on.
+ If the order is important, the message A must be processed before the message B.
+ But consumers are independent, they do not coordinate with each other.
+ Consumer 1 may be slow or even fail processing the message A, while consumer 2 will succeed
+ processing the message B, causing the message B to be processed prior to the message A. This can be critical for
+ some systems.
+ For example, a booking system.
+ The message A represents a booking creation event, while the message B represents a booking
+ cancellation event.
+ If the message B is processed first, a not yet existing booking is cancelled.
+ And right after that, when the message A is processed, the booking is created in the system.
+ Instead of being created and then cancelled, the booking is only created and never cancelled.
+ So, multiple competing consumers break the order of message processing.
+ To demonstrate the problem with double processing, let's now take a pool-based system, like
+ SQS.
+ As before, we have three messages in the queue and two consumers.
+ The first consumer pulls and gets the message A. The broker marks the message A as invisible
+ for all consumers.
+ When the second consumer pulls, the message B is returned by the broker, and the message
+ B also becomes invisible.
+ Let's assume both consumers process their messages successfully.
+ And even in the right order.
+ The message A was processed first.
+ But problems occurred when the first consumer tried to delete the message A from the queue.
+ The call failed.
+ Meaning that the message A still sits in the queue.
+ After the visibility timeout got expired, the message A is pulled once again, but this
+ time by the second consumer.
+ And this is the problem.
+ If the message A was pulled by the first consumer, it could have been deduplicated, as the first
+ consumer already saw the message A and remembered it.
+ But for the second consumer this message is completely new.
+ Hence, it is successfully processed.
+ Using our booking analogy, a booking was created by the first consumer, then canceled by the
+ second consumer, then created once again by the second consumer.
+ So, competing consumers increase the chances of processing the same message multiple times.
+ Of course, there are several ways to mitigate this problem. One such option is to use a shared deduplication cache, so that the deduplication cache is not local to each consumer, but all
+ consumers use one shared cache. We will talk more about this use case later on the course when we
+ discuss a distributed cache.
+ I want to show you one more example that demonstrates the intricacies of multiple consumers.
+ This time using log-based messaging systems like Kafka and Kinesis, systems that rely
+ on consumer offsets.
+ When we have multiple consumers on the same queue, we get something completely different
+ than what we have seen in the previous two examples. Each consumer manages its own offset, and messages are not immediately deleted.
+ As a result, every message is processed by every consumer. No matter how many consumers on a single
+ queue we have, they do not compete for messages. All consumers do exactly the same thing. They process each and every message in the queue.
+ Which means Kafka is not scalable, right?
+ No, Kafka is highly scalable.
+ Bear with me, this all will make sense in just a few seconds.
+ So what have we got here?
+ To scale out message processing we want multiple consumers on the same queue.
+ To process messages
+ in parallel.
+ Multiple consumers also help increase availability.
+ But as we just saw, the order of messages is lost, as well as the number of duplicates
+ in the system may increase.
+ And log-based messaging systems with the offset tracking approach do not even support having
+ competing consumers on a single queue.
+ Fortunately there is an elegant solution to overcome all these problems.
+ It is called data partitioning or sharding.
+ The idea is pretty simple.
+ Instead of having multiple competing consumers on a single queue, let's have multiple queues
+ with a single consumer for each queue.
+ Essentially, we split the data into partitions, shards, and each partition is processed by
+ its own data processor.
+ This way we get what we wanted.
+ Multiple consumers to process messages in the queue in parallel.
+ Although this is more a single logical queue right now.
+ And it consists of several physical queues, partitions.
+ When messages are partitioned, we no longer have a global order of messages.
+ As messages in each partition are processed by different consumers with their own pates.
+ But we have messages ordered within each partition.
+ And this is actually enough for many systems out there.
+ Many systems do not expect the total order of all events, but they expect the order of
+ events within a particular group, a partition.
+ Let's recall the booking system example.
+ We don't need to process all bookings in order, but we need bookings for the same user to
+ be processed in order.
+ And partitioning makes it possible.
+ When partitioning booking events, we make sure that all events for the same account
+ go to the same partition.
+ This way we process several different accounts in parallel, but the same account is processed
+ by only a single consumer, which preserves the order of processing.
+ Partitioning is one of the cornerstone concepts in distributed systems.
+ Let's talk more about it.
+ Partitioning is everywhere these days.
+ Large volumes of data that need to be transferred, processed and stored, force systems to split
+ data into manageable chunks, shards.
+ This allows systems to scale out almost indefinitely, as we keep adding shards when the amount of
+ data grows.
+ Partitioning also improves performance of the system, because data write and read operations
+ take place over a smaller volume of data. We can now balance the workload across shards and run operations in parallel.
+ Partitioning also helps improve availability.
+ If some shard fails, only the data on the shard is available.
+ Other shards continue to store data.
+ Let me please show you various types of distributed systems and how they leverage the concept
+ of partitioning.
+ And we start with messaging systems.
+ Rebutum queue, for example, has a concept of sharded queues.
+ Producers publish messages to a single logical queue, that is partitioned into multiple regular
+ queues, shards.
+ Each shard has a single consumer.
+ As discussed earlier, we lose the total order of message processing when we partition messages.
+ The message B for example can be processed before the message A, but the order is guaranteed
+ on the shard level.
+ The next example is a log-based messaging system, such as Kafka or Kinesis.
+ Both these systems divide all incoming messages into partitions.
+ Partitions are called shards in Kinesis.
+ Every partition is processed by its own consumer.
+ As you already know, this approach doesn't allow to have competing consumers on the same
+ partition.
+ So, to parallelize message processing in Kinesis and Kafka we create more partitions.
+ Partitioning is widely used in databases.
+ Both SQL and NoSQL.
+ When a single database server is no longer enough to store all the data, let's have multiple
+ database servers – shards, where each shard holds a portion of data.
+ As soon as we introduce multiple storage servers, also called nodes, a whole bunch of questions
+ appears.
+ Which node should we write data to?
+ How do we pick a node when reading data?
+ How do we ensure that data is evenly distributed among the nodes?
+ And what does evenly distributed even mean in this case?
+ Does it mean that the nodes store the same volume of data?
+ Or does it mean that each node processes the same number of read and write requests?
+ Good questions, and we will answer them a bit later.
+ Right now, let me share with you two key ideas databases use to partition data.
+ The first idea is to introduce a component that knows everything about shards.
+ How many shards exist and which shard is responsible for what piece of data.
+ Let's call this component a configuration service.
+ When a client makes a request to either write or read data, the request comes to another
+ component.
+ Let's call it a request router.
+ The request router then calls the configuration service to identify what shard to call, and
+ it sends the request to that shard.
+ The second idea is to avoid any additional components needed for coordination, but to
+ allow shards communicate with each other and agree among themselves on how to split data
+ and how to coordinate requests.
+ The first approach is used for example to scale SQL databases.
+ Each shard is a separate database server.
+ But not only SQL databases use this approach.
+ MongoDB, a non-relational database, is based on this idea of having a centralized control.
+ As for the second approach, examples are Dynamo and Cassandra.
+ Designs of these databases favor decentralized peer-to-peer communication.
+ You should not be surprised if I tell you that exactly the same ideas can be used to
+ design a distributed cache system.
+ Database shards simply become cache shards.
+ And instead of storing data on disk, like database shards do, cache shards store data
+ in memory.
+ One more class of distributed systems that heavily use partitioning is object storage.
+ Systems such as AWS S3, Azure Blob Storage, Google Cloud Storage.
+ When we upload a file to the object storage, one of the storage nodes is selected and the
+ file is persisted there.
+ Metadata information about which storage node holds the data is captured by the metadata
+ service.
+ The one that we called a configuration service before.
+ When a GET file request comes, the request router lookups a storage node in the metadata
+ service and forwards the request to that node to retrieve the file. In the next several videos, let's answer three key questions about data partitioning.
+ How to partition data?
+ How to route requests to shards?
+ And how to rebalance partitions when some shard fails or when new shards are created?
+ There are three commonly used strategies for deciding how to split data across charts. Lookup strategy, range strategy and hash strategy.
+ I will try to explain the strategies using a simple example.
+ Let's imagine we run a popular social media website, that is used by people from all over
+ the world, like Facebook.
+ Only our system is called FaceTime.
+ At some point we no longer can store all the user's data on a single database server, and
+ we decide to partition data.
+ We have estimated that based on the traffic growth, 3 shards would be good enough to start
+ with.
+ And more shards can be added later.
+ Data for every user should be moved to one of these 3 shards.
+ How do we choose a shard for each user?
+ The lookup strategy tells us to create a mapping where each key is assigned a shard.
+ Let's say we have a user table in the database.
+ We introduce a new column in this table, a shard identifier, and populate this column with various.
+ For example, we randomly pick a shard and assign it to every user. We do this for all historical
+ data, for all users already present in the table, plus for all new users when they sign up on
+ the FaceTime website.
+ The lookup strategy offers a lot of control over the way the charts are assigned and used.
+ We can assign charts randomly, which often works well in practice and results in close
+ to even distribution of data across charts.
+ Or we can implement something smart, such as constantly measure capacity of each
+ shard and assign shards based on the utilization.
+ We will talk more about this idea when we discuss cell-based architecture later in the
+ course.
+ But there are drawbacks.
+ First off, we now have a hard dependency on the mapping.
+ For every read and write request from the user, we need to look up a shard that contains
+ user's data.
+ This is by the way where the name of the strategy comes from, because of the lookups we need
+ to make.
+ What you may often find in practice is that teams build a separate lookup service, that
+ acts like a cache for the mapping, to speed up lookup queries.
+ And this immediately raises the whole bunch of questions.
+ How to make sure this lookup service is always available?
+ How to make it fast?
+ How to make it scalable?
+ How to make it consistent?
+ We have already discussed many of the availability and performance concepts.
+ Many concepts of scalability and consistency are yet to come.
+ Anyway, please pause this video and think over these questions for a moment.
+ One more potential issue with this mapping, it can grow really large over time and we
+ will need to partition the mapping itself, which is not rare for large systems.
+ We can of course solve all these technical challenges, but let's see what other partitioning
+ strategies can offer us.
+ Next comes the range strategy.
+ And it tells us that each shard is responsible for a continuous range of keys.
+ For example, let's use the user's last name as a key.
+ In reality, we would use the user's unique identifier as a key.
+ But for the sake of simplicity, let me use the last name as the key.
+ Each shard is assigned a range of keys.
+ Meaning that last names which start with letters A, B, C and so on till the letter H leave
+ on the first shard.
+ Last names which start with letters from I to Q leave on the second shard, and so on.
+ With this approach, we no longer need a lookup service to determine the shard.
+ As long as we know partition boundaries and the user's last name, we can identify the
+ shard.
+ It is relatively easy to implement this strategy.
+ The range strategy is often used by applications that need to handle frequent range queries.
+ For example, the application regularly needs to find all orders placed in a given month.
+ Each shard in this case can store a month's worth of data.
+ And when the range query comes, we identify and retrieve data from a single shard only.
+ If we partition data based on the order ID for example, orders for the same month will
+ be stored across many shards, making range queries less effective. The main problem is the strategy though, it doesn't provide optimal balancing between
+ shards, leading to the hot shard problem, when one shard experiences a much higher load
+ than its peers.
+ We will discuss ways to deal with hotspots a bit later. Now, let's see how the hash strategy
+ works. As before, let's partition data based on the user's last name. But this time, instead of
+ using only the first letter, we use the entire last name string. We take the string and compute
+ a hash number. We now assign a range of hashes to each shard.
+ How?
+ There are several options.
+ For example, we can evenly space the boundaries.
+ Or we can use a consistent hashing algorithm, which we will discuss later.
+ Each partition right now stores all users whose hash value falls within a partition's
+ range.
+ Looks very similar to the range strategy, right? Except that we additionally apply a hash function.
+ Is this such a big deal?
+ It turns out it is.
+ The hash function helps distribute data more evenly across shards.
+ Two last names that start with the same letter will result in two completely different hash
+ values.
+ When we store such users using the range strategy, these users will appear on the same chart.
+ Whereas with the hash strategy they will likely appear on different charts.
+ So, data is more uniformly distributed, which is a big benefit of the strategy.
+ At the same time, we lose the ability to do efficient range queries.
+ In addition, computing the hash imposes an additional overhead, which may become critical
+ for high load systems. you you you you you you you you you you you you you you you you It is important to note that a shard does not necessarily mean a separate physical machine.
+ Very often we have one to one mapping between shards and machines, when each shard lives
+ on a separate physical machine.
+ Such shards are often called physical shards.
+ But we can also put multiple shards on the same machine.
+ For example, store 6 shards on 2 machines, 3 shards per server.
+ Such shards are often called virtual shards.
+ This many-to-one configuration between shards
+ and servers can help simplify shard rebalancing, which we will discuss in the next video.
+ In this video, let's talk about how clients identify shard machines and send requests to them.
+ Later on the course, when I say shard, I basically mean the shard instance running on a physical
+ machine. And when I say shard machine, or shard server or shard node, I mean the physical machine
+ that hosts the shard instance.
+ When a user makes a request to one of the fast-tom services to read or write data for
+ a key, each application server in the service cluster has to do two things.
+ Identify the shard that stores data for the specified key and forward the request to the
+ physical machine that hosts the identified shard.
+ To identify the shard, the application server uses one of the partitioning strategies.
+ Lookup, range or hash strategy.
+ We already know this.
+ To identify the shard machine, we need to have a mapping between a shard name and an
+ IP address of the machine the shard machine, we need to have a mapping between a shard name and an IP address of the machine the shard lives on.
+ So, to connect to shards, every client must obtain somewhere and keep the up-to-date version
+ of this mapping.
+ How do we achieve this?
+ One of the first ideas that comes to mind is to put this information into a file and
+ deploy that file to every client. It is simple to implement and may work well in cases where we have a small number of shards.
+ The main problem with this approach is the lack of flexibility.
+ There are several moving pieces in the mapping.
+ The number of shards may change, as we can add more of them.
+ IP addresses may change when a shard server fails and we replace it with a new one.
+ Shard to IP assignments may change as shards can be moved around due to rebalancing.
+ Every time the mapping changes we need to redeploy it to every client machine.
+ And there can be a lot of them, since many Face-To-Om services may need to interact with
+ the shards.
+ Let's see what other options we have.
+ What if we keep the file, but simplify the deployment process?
+ For example, we may put the file to some shared storage, and make application servers poll
+ for the file periodically.
+ All application servers try to retrieve the file from a common location, for example a
+ 3 storage service.
+ To implement this option we may introduce a daemon process that runs on each application
+ server and pulls data from the storage once a minute or several minutes.
+ This option looks like an improvement, as we only need to deploy the mapping to a single
+ location, and the time of how fast each application server gets the updated information is much
+ lower.
+ But the drawback of this approach is the increased complexity of the client, as we need to run
+ the daemon process on every client machine and monitor this process.
+ The process must always be up and running, otherwise changes to the file will not be
+ timely reflected on the client.
+ So as we have just seen, updating each client when the partition configuration changes is
+ either slow or requires more complicated client implementation and maintenance.
+ What if we get rid of the mapping on the client side altogether?
+ That is, we no longer need to update the client.
+ Let's elaborate on this idea. That is, we no longer need to update the client.
+ Let's elaborate on this idea.
+ If clients don't know about the mapping, some component still needs to know, right?
+ We have two options at our disposal, and we have seen both of them already.
+ Let's call them a proxy option and a peer-to-peer option.
+ In the proxy option we have a new component ReverseProxy sitting in between clients and
+ shards.
+ Proxy has a mapping and it knows everything about shards.
+ Clients make a call to one of the proxy machines, while the proxy machine makes a call to the
+ corresponding shard server.
+ In the peer-to-peer option we make shard servers know about each other.
+ A client makes a call to a random shard server.
+ The server may either own the shard and handle the request directly, or it will forward the
+ request to the appropriate shard server.
+ Will wait for the reply and will pass it along to the client.
+ Both these options allow the client to be very lightweight.
+ Yes, the client still needs to know the list of IP addresses of all proxy servers or all
+ shard servers.
+ But this information does not change frequently.
+ If we have a small number of servers, we can share the list via DNS.
+ And if we have many servers, we can even put a load balancer between clients and servers.
+ And if you wonder how proxy machines find shard servers on the network or how shard
+ servers know about each other, I encourage you to recall our discussion of server discovery
+ and peer discovery problems.
+ Let me quickly remind you about approaches we discussed back then.
+ First, we can use a static list of IP addresses of all shard machines.
+ We no longer need to deploy this list to every client, but only to a limited number of proxy
+ machines in case of the proxy option or shard machines in case of the peer-to-peer option.
+ Second, we can use the service registry concept, when we have a separate service that allows
+ shards to register themselves and monitor their state, a configuration service.
+ Whenever a new shard machine is added or removed, this information is propagated to the configuration
+ service.
+ Proxy machines as well as shard servers can retrieve metadata information from the service.
+ Third, shard servers can find each other and constantly exchange information about the
+ estate using the gossip protocol.
+ I am sure you have admitted many similarities between the concept of service discovery we have
+ discussed in the past and the concept of shard discovery we are talking about here. And this
+ is indeed the case, since a shard can be viewed as an instance of some service. Hence, similar ideas apply.
+ Hence, similar ideas apply. One of the biggest challenges with partitions is how to keep them balanced.
+ Even if we manage to initially split data evenly between shards, meaning that every
+ shard processes roughly the same number of requests, this most likely will change over
+ time.
+ Data set size will increase, causing some ranges of keys have more data than others.
+ Some keys will be more popular than other keys, leading to the hotspot problem.
+ And some shard machines will fail over time, causing other machines share the request load
+ previously handled by the failed machine.
+ So, to reduce the chance of hotspots and to guarantee even low distribution, we need to
+ rebalance the shards periodically.
+ How do we do this?
+ Let's see what strategies are available.
+ One of the first ideas that comes to mind is to split a shard when it grows beyond the
+ specified size.
+ For example, split into two shards.
+ One shard, approximately half of the data, stays on the current machine, while another
+ shard is moved to its own machine.
+ At a high level, the process works as follows.
+ The shard split process can be initiated manually by an administrator or automatically by data
+ inserts and updates.
+ When data split happens, the machine that holds the shard connects to the configuration
+ service and updates the metadata.
+ The range of keys is split, and each shard now owns its own range, which is roughly the
+ half of the previous range.
+ At this point we can start rebalancing process and move one or several shards to the new
+ physical location.
+ To do this, we first clone the shard onto a new machine.
+ During the clone process, the source shard handles all the read and write requests.
+ When fully synchronized, the source machine notifies the configuration service about the
+ new location of the shard.
+ At this point, all requests start to go to the new location.
+ And the old copy of the shard is deleted on the source machine.
+ As we have just seen, splitting the range of keys that a shard owns is just a metadata
+ change.
+ This doesn't cause immediate data migration between shard servers.
+ Whether or not we need to redistribute the shards between servers is decided by another
+ process – the balancer.
+ Typically, this is a background process that monitors the number of shards on each server.
+ If the difference in number of shards between the largest and smallest server exceeds a
+ predefined threshold, the balancer begins migrating shards across the cluster to reach
+ an equal number of shards per server.
+ Adding a new server to a cluster triggers the balancer to start the shard migration
+ process.
+ It might take some time for shards to migrate to the new server.
+ Removing a server is basically the process of adding a server in reverse.
+ Shards residing on the server to be removed are redistributed evenly across the remaining
+ servers.
+ When data is deleted and some shard size goes beyond a predefined minimum, adjacent shards can be merged together into a single shard.
+ Splitting a shard depending on its size is a good design option.
+ It allows to keep the size of each shard below some configurable maximum.
+ When the total data volume grows, more shards are created in the system.
+ And they are moved around to better utilize the disk space.
+ When the total number of requests grows, we can add more shard servers to the cluster
+ and transfer a fraction of the total load to the newly added machines.
+ This rebalancing approach is used by databases such as MongoDB and HBase, but this is not
+ the only option.
+ Let's see what else we have.
+ How about splitting one or more shards when a new shard server is added to the cluster?
+ For example, we have two shard servers with two shards on each server.
+ When a new server joins the cluster, it randomly chooses two shards to split.
+ The new server then takes ownership of one half of each of these shards.
+ This rebalancing strategy is used by the Cassandra database.
+ And we will cover details of this approach in the next video.
+ At the heart of the two rebalancing strategies we just discussed is the splitting process.
+ It keeps shards from growing too large.
+ And it allows the system to scale pretty much indefinitely as the volume of data grows.
+ Unfortunately, the splitting process incurs relatively high implementation complexity.
+ This operation is not at all trivial.
+ When we split a shard, the state of the world changes.
+ And all shard clients have to become
+ aware of this new state.
+ So that all clients write data to and read data from the same set of new shards.
+ MongoDB for example keeps this information in the centralized metadata store.
+ And if the store becomes unavailable, shard splits are no longer possible.
+ What if we get rid of the shard
+ splitting process? This may seem counterintuitive at first, as it means that shards can grow
+ really big. But if the range of keys or hashes that shard owns is relatively small from the
+ start, the size of the shard will never get too large. I mean it will grow of course,
+ but to a manageable size even in the worst case.
+ This seems like the idea worth exploring.
+ Let's take a closer look at it.
+ Let's make every shard to own only a small subset of all possible keys.
+ This immediately means that we need to create many shards initially.
+ For example 1024 shards.
+ And this number does not change.
+ In other words, the assignment of keys to shards always remains the same.
+ All the shards live on the predefined number of machines, for example 16.
+ 64 shards on each machine.
+ Unfortunately, this setup still does not guarantee even low distribution.
+ Some shards will still be bigger than others, some will be more popular, causing disproportionately
+ higher load on the machines they live on.
+ But we know how to deal with this problem.
+ We can move shards around to balance the load.
+ Moreover, when a new machine is added to the cluster, every machine moves some of its shards
+ to this new machine, until shards are fairly
+ distributed once again.
+ Clever, right?
+ This rebalancing strategy is referred to as fixed number of partitions strategy.
+ Unlike previously discussed strategies in which the number of shards changes, with this
+ strategy the number of shards always remains the same.
+ This allows to avoid the shard split procedure, making the strategy simpler to implement and
+ maintain.
+ But there are drawbacks.
+ First of all, it can be hard to choose the initial number of shards.
+ We cannot have too little, as shards may grow too big, and we don't want to have too many
+ shards, as managing all these shards becomes complicated.
+ Remember that we need to copy shards when new machines are added, as well as move shards away from the machine that is down.
+ For example, for maintenance.
+ The second drawback of this strategy is the risk that some shards will grow really large.
+ Couchbase database uses this strategy for rebalancing, as well as Elasticsearch, which
+ is a popular search engine.
+ Let's now see how the rebalancing strategies relate to the partitioning strategies we discussed
+ earlier.
+ The rebalancing strategy where we split a shard based on its size is well suited for
+ both range and hash partitioning.
+ The rebalancing strategy where we split shards when a new server joins a cluster works very
+ well with hash partitioning.
+ The fixed number of shards is typically used with lookup and hash partitioning.
+ The most common partitioning strategy in practice is hash partitioning.
+ How can we implement it?
+ Conceptually to implement hash partitioning we need to define three things.
+ Boundaries for each chart, where each chart lives and how to rebalance charts.
+ Among the many different ways to implement these three items,
+ there is one algorithm that deserves special attention. It is called consistent hashing.
+ The simplicity and efficiency of the consistent hashing algorithm make it very popular for
+ implementing hash partitioning. So, let's take a closer look.
+ It all starts with a hash function that maps keys to integers.
+ Because this hash function will be used for every request, we better use fast hash functions.
+ Cryptographic hash functions, for example SHA family algorithms, distribute keys quite
+ well.
+ But they are also quite expensive to compute.
+ That is why non-cryptographic hash functions are more suitable for general hash-based lookup. For example, Marmar hash. Let's assume our hash function produces an integer in the range from 0
+ to 2 to the power of 31. Let's see how the consistent hashing algorithm solves the first
+ two problems we mentioned earlier. How to split this range into smaller hash value intervals,
+ and how to assign each interval to a server.
+ The consistent hashing algorithm does this by mapping each object to a point on a circle.
+ We pick an arbitrary point on the circle and assign zero number to it.
+ We move clockwise along the circle and assign values.
+ We then take a list of servers and calculate a hash for each server based on its identifier,
+ for example an IP address or a hostname.
+ The hash value tells us where on the consistent hash and circle the server lives.
+ And the reason we do all this, it makes it easier right now to assign a list of hash
+ ranges each server owns.
+ We say that each server owns all the hash values between this server and the nearest
+ clockwise neighbor.
+ It can be counterclockwise, not matter much.
+ Now, when we need to look up what server stores a particular key, we calculate a hash value
+ for the key and move backwards to identify the server.
+ In the example just given, each server owns only one key range, only one shard.
+ In other words, the example demonstrates how the consistent hashing algorithm works for
+ physical shards.
+ In a little while we will see how the algorithm works for multiple shards per server, virtual
+ shards.
+ The consistent hashing algorithm is relatively easy to implement.
+ We take server host names and hash them to identify hash ranges they own.
+ We then store the list of hash ranges in the sorted order.
+ We share this list with every client that needs to connect to short servers.
+ Wondering how we do it?
+ Here I should remind you of the request routing techniques we discussed recently.
+ Now, using the binary search algorithm, each client can quickly find the range the key
+ belonged to.
+ When we know the range, we know the server that owns this range, as each server has only
+ a single range mapped to it.
+ The client can now forward the request to the identified server.
+ Simplicity and speed are two big advantages of the consistent hashing algorithm.
+ We now have a good enough understanding about how the consistent hashing algorithm solves
+ the first two problems mentioned in the beginning of this video.
+ How to define short ranges and how to assign them to servers.
+ Next, let's talk about rebalancing. What happens when a new server is added to the cluster, or when one of the servers leaves the
+ cluster? When adding a new server, we first calculate its hash value to find its position
+ on the ring. From now on, the new server becomes responsible for its own range of keys on the circle,
+ while its counterclockwise neighbor, server 4 in this example, becomes now responsible
+ for a smaller range.
+ What basically happened is that the newly added server took responsibility for a subset
+ of what was formerly owned by another server.
+ And nothing has changed for all the other servers in the cluster.
+ Similarly, when some server is removed from the cluster, another server, the counterclockwise
+ neighbor becomes irresponsible for a larger range of hashware.
+ And once again, nothing has changed for the rest of the cluster.
+ Which is exactly what we want during rebalancing.
+ To move as little data around as possible.
+ What we've just implemented is the rebalancing strategy number 2 from the previous video.
+ Where we split shards when a new server is added, but the consistent hashing algorithm
+ also works well with the rebalancing strategy number 3.
+ Where we have a fixed number of shards.
+ Let's take a quick look.
+ In the current example we have 8 equally sized shards. How do we assign these shards to servers?
+ Pretty much the same as before, only with a little tweak.
+ We calculate a hash value for each server, and we move clockwise to find the range border.
+ Here is where we place the server.
+ When a new server joins the cluster, it claims ownership of one or more shards previously
+ owned by another server.
+ As you already know, we never split shards with this approach.
+ We only move shards around to spread the load more evenly across the cluster.
+ Important to note that data is replicated within the cluster, so that when any of the
+ server crashes, the data is not lost.
+ The consistent hashing algorithm can help here as well.
+ We can store replicas on the next one or two clockwise neighbors.
+ So, here is more realistic state of the world.
+ The classic consistent hashing algorithm has two big flaws.
+ A so-called domino effect and the fact that servers do not split the
+ cycle evenly.
+ The domino effect may occur when some server experiences a very high load and it crashes.
+ All of its load is transferred to the next server.
+ This transfer might overload the next server, and then that server would fail, causing a
+ chain reaction.
+ To understand the second problem, remember that we place servers randomly on the circle,
+ which means that some servers may reside close to each other, while other servers may be
+ far apart, causing uneven distribution of data among servers, leading to hotspots.
+ To deal with these problems, several modifications of the consistent hashing algorithm have been
+ introduced.
+ One simple idea is to add each server on the cycle multiple times.
+ These points are called virtual nodes or vnodes.
+ For example, we have two servers, and they initially split the cycle like this, unevenly.
+ Now we take the hash function and hash each server and times, modify the server name a
+ bit every time, for example like this, when we introduce an index in front of the server's
+ IP address and we increment this index to calculate a position of the next virtual node
+ on the cycle.
+ As you may see, each server right now owns not a single range as before, but a set of
+ ranges.
+ And that is distributed more evenly across two servers.
+ Here is an example where we have three servers, and each server is assigned three points on
+ the ring.
+ Each server owns three different ranges, shards.
+ If a server becomes unavailable due to a failure or scheduled maintenance, the load handled
+ by this server is distributed
+ across the remaining available servers.
+ Without virtual nodes, all the load from the unavailable server goes to one server, the
+ neighboring one.
+ More virtual nodes we have, more uniform distribution we get.
+ Although we will need more memory to store the list of virtual nodes, and identifying
+ the server that holds the key requires more binary search iterations.
+ Trade-offs as usual.
+ Let's now look at the applications of the consistent hashing algorithm in real-world
+ systems.
+ Several different databases use consistent hashing, such as Cassandra, Couchbase, React,
+ Voldemort.
+ Consistent hashing helps assign shards to servers, and helps rebalance shards efficiently
+ by minimizing data movements.
+ Similarly, consistent hashing is used for data partitioning in distributed caches and
+ content delivery networks.
+ Consistent hashing helps distribute cache data, for example web content, evenly amongst
+ CDN cache servers.
+ Consistent hashing is used by network load balancers.
+ First, consistent hashing helps a load balancer distribute persistent connections evenly among
+ backend servers.
+ Second, when some backend server becomes unavailable, only connections to this server must be reshuffled.
+ All other connections stay intact.
+ We will cover load balancers in detail later in the course.
+ Not only load balancers need to reshuffle persistent connections in case of a server
+ failure.
+ Chat systems need to do similar stuff with for example web socket connections.
+ Users have to be reconnected to remaining servers, and consistent hashing can help distribute
+ connections even among them.
+ We can also use consistent hashing to distribute messages between multiple queue partitions in a messaging system. RabbitMQ for example implements such an option. However, most messaging systems
+ use simpler mechanisms, for example a mod function to distribute messages among partitions.
+ Please remember that if data is short-lived and does not need to be moved around for rebalancing, we can use very basic partitioning algorithms.
+ And a mode function or a random selection function may suffice.
+ But if we need rebalancing and want to minimize data movement between servers, consider consistent hashing.
