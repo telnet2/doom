@@ -1,0 +1,276 @@
+The architecture we discussed in the previous video has several flaws in where and how we store video content.
+Let's elaborate on this.
+The first problem is read latency.
+The uploaded videos are physically stored in a data center, say somewhere in the United States.
+And viewers from India, China, Europe may experience poor performance while downloading this video from a faraway part of the globe.
+The second problem is read scalability.
+With millions of concurrent viewers from all over the world, we will need thousands of servers to handle the load.
+And it is not only server's capacity that is a concern, but network bandwidth as well.
+When too many people download a heavy media content from a single data center, network might quickly become a bottleneck.
+Fortunately, we already know how to deal with these problems.
+Data replication and caching helps improve read scalability.
+Whereas the concept of regions, when we bring media content closer to viewers in different parts of the globe, helps to solve the problem of latency.
+By combining these solutions, we get what is called a content delivery network, or CDN.
+Let's take a closer look at CDN.
+CDN is a distributed network of servers placed across the globe with the purpose of delivering web content to users as fast as possible.
+Without CDN, we would have something like this.
+When users all over the world fetch data from a single geographical location.
+With CDN, it will be something like this.
+When users fetch a copy of the content from servers closer to them.
+Here is how we use CDN.
+Let's say a web content is stored on a web server somewhere in the US.
+We then register our domain name with the CDN provider.
+For example, Amazon Cloud Grant.
+And the CDN provider gives us a new domain name for our content.
+We put this new name on a web page.
+And when users load the web page, a browser makes a call to the CDN instead of our server to retrieve the content.
+The closest to the user's CDN server will be selected.
+Think of the CDN server as the ID through cache server.
+If the requested file is present on this cache server, it is returned immediately.
+And if the file is not present, the CDN server makes a call to our web server to retrieve and cache the file for all subsequent requests.
+Such CDN type, when CDN servers pull data from the original server when requested, is called PullCDN.
+There is also PushCDN.
+When the content is pushed to CDN servers every time it is published to the original server.
+Important to mention that when the content is cached on CDN servers, we need to configure a time to leave, TTL.
+The length of time that CDN should keep the content.
+HTTP headers is one of the options to control TTL.
+And here is how CDN works.
+All the magic is hidden behind the new domain name that CDN generates.
+A collection of servers in a particular geographical location is called a point of presence, POP, also known as edge location.
+Each POP contains two types of servers.
+Servers to cache the content, let's call them cache servers, and servers that know about all cache servers in the current POP, and references to other POPs.
+Let's call them request routing servers.
+CDN providers register request routing servers for each POP with internet service providers in every region.
+This way the DNS resolver server of your internet service provider resolves the CDN's domain name into the IP address of the request routing server in the closest POP.
+How the closest POP is found?
+For example, by using the anycast routing method.
+The request routing server then selects and returns the IP address of one of the caching servers.
+And the browser will make a call to that cache server to retrieve the content.
+And if the current POP is busy or not optimal for the user, the initially selected POP may forward the request to a different POP.
+Let's now go back to our video delivery solution and see how CDN helps to improve it.
+First thing to mention is that modifying our solution to use CDN is easy.
+We just need to update segment URLs in the manifest file to point to CDN instead of our own web server.
+Now about CDN benefits.
+We already mentioned two of them, which is performance and scalability.
+But there are more.
+CDN helps to build redundancy.
+We have more servers to handle requests from users and we have several copies of data.
+Even when the entire POP fails, users can failover to other edge locations and get the content from there.
+We know already that redundancy and failover are two necessary conditions for reliability.
+What's more, and we saw this on the previous slide, CDN balances the load of network traffic.
+This helps to ensure that no one server gets overwhelmed.
+Therefore, we can claim that CDN increases reliability.
+Additionally, any cost and load balancing provided by CDNs help protect websites against some common malicious attacks, such as DDoS.
+We have already discussed pros and cons of both push and pull design options.
+Now, let's talk about popular technologies that enable clients or consumers in our case to pull data and enable servers or brokers in our case to push data.
+Let's start with pull options.
+There are two techniques a client can use to ask a server for new data regularly.
+They are called short polling and long polling.
+Short polling is what we all get used to.
+The client makes a call to the server and the server responds back with whatever data is available at the moment.
+Think of the consumer in this case as a job that runs every n seconds.
+With every run the consumer sends a request to the broker and the broker replies back immediately with one or maybe several messages up to some maximum number of messages.
+What is good about short polling, it is simple to understand and easy to implement.
+But it has drawbacks.
+With short polling, it may be difficult to define a proper value of the polling interval.
+On the one hand, we want to consume messages as soon as they arrive to the broker.
+Hence, we need to pull often.
+On the other hand, polling too often consumes resources mostly on the broker side.
+Remember that every HTTP request requires a connection.
+The broker also needs to authenticate and authorize the client, check quotas for the client, decrypt and deserialize request data, validate the request, and more.
+To deal with these deficiencies, long polling was introduced.
+With long polling, the consumer makes an HTTP request to the broker.
+And if there is data that can be served, the broker replies back immediately.
+If there are no messages available in the requested queue, the broker does not respond back.
+The broker just sits and waits for messages to arrive to the queue.
+And the consumer is waiting as well on the other side of the open connection.
+Everyone is waiting.
+But they cannot do this forever.
+So one of two things will happen.
+Either a message will arrive to the queue, and the broker will send this message to the consumer.
+Or the broker will send an empty response to the consumer after a specified wait time expires.
+There are different ways to tell the broker what this wait time value should be.
+The consumer may pass this value as a request parameter.
+Or the broker can be configured with some static value.
+When the consumer receives messages or when the request times out, the consumer immediately makes a new request to the broker.
+To better memorize this option, think of an endless while loop.
+When the consumer makes a call to the broker, the world stops.
+And after the response is returned and data is processed, a new request is initiated on the next iteration of the loop.
+So, choosing between short and long polling, which option is better?
+Typically, long polling is preferable to short polling for messaging systems.
+Long polling reduces the number of empty responses.
+And consumers receive messages as soon as they arrive in the queue.
+One of the use cases when short polling is better is when the consumer expects an immediate response from the broker.
+For example, the consumer uses a single thread to poll multiple queues.
+With long polling, the thread will sit there waiting for messages from the first queue.
+And processing of other queues will be delayed.
+By the way, the best practice is for a single polling thread to process only one queue.
+Now let's take a look at push options.
+There are several push options available.
+We will consider two popular ones.
+WebSocket and server sent events.
+And we will start with WebSocket.
+But before we discuss what WebSocket is, let's ponder a little about how a server can push data to clients.
+We know that every HTTP request uses an underlying TCP connection.
+And while HTTP is a unidirectional protocol, meaning that the client sends the request and the server replies back with the response,
+the underlying TCP connection is bidirectional, meaning that both the client and the server can use this connection to send data in either direction.
+The HTTP protocol doesn't allow the server to use this connection at its own discretion.
+But what if it could?
+What is else great about this TCP connection is that it can be established using a standard HTTP port, like port 80, which is typically open,
+while all other ports on the server can be blocked by firewalls.
+However, there is one small problem with this approach, for better say an inconvenience.
+As we already know, TCP is a stream-based protocol, meaning that with TCP we send bytes around.
+This is not developer-friendly.
+Messages are much easier to work with than streams of bytes.
+This is one of the reasons why the HTTP protocol with its request and response messages is so popular.
+So, what if we create a message-based protocol that works over HTTP ports 80 and 443?
+A protocol that reuses the TCP connection initially established for an HTTP request.
+A protocol that we can then ask all major browsers and web servers to support.
+Challenge accepted.
+However, such a protocol already exists, and is called WebSocket.
+Everything starts with the client sending a regular HTTP request to the server.
+The only special thing about this request is the upgrade header.
+It informs the server that the client wishes to establish a WebSocket connection.
+And if the server supports the WebSocket protocol, it replies back with the upgrade header in the response.
+Once the handshake is complete, communication switches to the WebSocket protocol over the established TCP connection.
+The client and the server can now send WebSocket messages back and forth.
+There are many benefits of the WebSocket protocol.
+It is fast, bi-directional, natively supported by browsers, provides a good alternative to raw TCP sockets when they are not allowed for security reasons.
+But WebSockets may be an overkill for many use cases where bi-directional communication is not needed.
+For example, the server only needs to push notifications to the browser from time to time.
+And that's it.
+There is a simpler way to implement a one-way communication from the server.
+And it is called ServerSendEvents.
+Here is how ServerSendEvents work.
+A client requests a web page from the server by sending a regular HTTP request.
+Let's say a user opens a mailbox page.
+Together with the requested web page, a small portion of JavaScript is downloaded and executed by the browser.
+This piece of code opens a persistent HTTP connection to the server.
+Meaning that when the connection is established, it is kept alive.
+The server uses this connection to push data to the client.
+For simplicity, you can think of a server as a job that runs periodically, checks if any
+new email has arrived, and sends to your browser a notification every time a new email is available
+on the server.
+And if the connection drops, the client will automatically try to reconnect.
+MessageData is a string, which allows the server to send arbitrary text to the client.
+For example, JSON or XML converted to a string.
+The main advantage of ServerSendEvents is simplicity.
+It is easy to implement them both on the client and server side.
+ServerSendEvents use HTTP as a transport.
+Which means they don't require a custom protocol or server implementation to get working.
+WebSockets, for example, require such an implementation.
+As for limitations, ServerSendEvents are monodirectional.
+Meaning that data is sent in only one direction, from the server to the client.
+ServerSendEvents are limited to text data and do not support binary data.
+There is also a limit to the number of open connections a single browser can have.
+As you already know, both WebSocket and ServerSendEvents require a persistent connection between the server and the client.
+From the client's perspective, having such a connection is not a big deal.
+It is cheap.
+But from the server's perspective, when thousands of different clients establish connections with a single server, it may become a problem.
+The question that many people ask is how many concurrent connections a single server can handle.
+And this problem even has a name, the C10K problem.
+Going in 1999, the problem is to optimize a single WebServer machine to handle 10,000 of concurrent connections.
+Looking ahead, I can say that this problem is successfully solved.
+And modern servers can handle not just thousands, but millions of concurrent connections.
+There is even a problem called C10M to handle 10,000,000 of concurrent connections on a single machine, which is also solved.
+Please note, and we have already mentioned this, that handling millions of concurrent connections on a single server is not the same as handling millions of concurrent requests on a server.
+The former is possible, the latter is not.
+Handling concurrent requests is about speed of processing, whereas handling of concurrent connections is about efficient scheduling of connections.
+In this video, let's take a closer look at two real-world architectures that scale push messages to millions of clients.
+The first example is MailRu architecture.
+MailRu is an email service in Russia.
+And it's big.
+Originally, the mailing client used short polling.
+And out of 50,000 of HTTP requests per second, 60% of queries returned empty results.
+As there were no changes in the mailbox.
+To reduce the load on the servers and to speed up mail delivery, they switched to using WebSockets.
+A simplified version of the polling architecture looked like this.
+A browser makes an HTTP call to the web server every several seconds.
+Which in turn calls the storage service to retrieve email messages from the persistent store.
+A new push-based architecture looks like the following.
+A browser establishes a WebSocket connection with the server.
+When the storage service gets an email, it sends a message to the messaging queue.
+Web servers are subscribed to this queue, and they get messages upon arrival.
+The web server then sends the message to the user's browser.
+Using this simple architecture, they were able to handle 3 million online connections per web server.
+Another example is Netflix and their push notification service.
+Here is a high-level architecture.
+Everything starts with the API Gateway service called ZOOL.
+ZOOL is the front door for all requests from devices and websites to Netflix backend services.
+ZOOL performs many typical functions of a classic API Gateway.
+Such as authentication and authorization.
+Logging and monitoring.
+Request routing and load balancing.
+Rate limiting and low shading.
+We will talk more about these and other API Gateway responsibilities in a detailed discussion of the API Gateway topic later in the course.
+In addition to all the standard functions, ZOOL also supports push messaging.
+Sending messages from a server to clients.
+Two protocols are supported.
+WebSocket and ServerSendEvents.
+A ZOOL cluster consists of many server machines.
+When a user opens the network's application, a persistent connection is established between a user's device and one of ZOOL's servers.
+After successful authentication, the server registers the user in Push Registry.
+Push Registry is a data store.
+And many options are available, such as Redis, Cassandra, DynamoDB.
+Push Registry stores information about which user is connected to which ZOOL server.
+And why do we need this information?
+To push messages to the client, we will need to look up the server to which the specified client is connected.
+Push Registry helps with this.
+And we will see more details shortly.
+Message producers, which are various backend services, send messages to the messaging system, which is Kafka.
+Message processor is a component that reads messages from the message queue.
+Each message comes with the identifier what user it must be sent to.
+Message processor takes user ID information and makes a call to Push Registry to look up the server that holds the connection.
+If the server is found, and that means the user is still connected to the ZOOL server,
+Message processor connects directly to the server, passes the message to it, and the server pushes the message to the user.
+In case client ID information is not found in Push Registry, which means the user is not connected or online at this moment,
+Message processor just drops the message on the floor.
+Can this architecture handle millions of concurrent connections?
+Sure, all components in this architecture are horizontally scalable.
+A single ZOOL server can handle tens of thousands of connections.
+And a cluster of several hundreds of such servers can handle millions of connections in total.
+For Push Registry, we choose a highly scalable datastore that supports low real latency.
+As you can see, we write only when the user first connects to a ZOOL server, and we read every time a message is sent.
+Hence, we have many more reads than writes.
+Kafka is a highly scalable messaging system, nothing new here.
+And as for message processors, we can run many instances in parallel.
+Autoscaling can be utilized for message processors.
+Depending on the message queue size, we can start more message processor instances to increase throughput,
+and stop instances when the message load decreases, to save on cost.
+Netflix uses public cloud to run all the systems.
+Therefore, cost savings is an important consideration.
+Handling long-lived connections at large scale, like millions of them, is a challenging task.
+Let me share with you several most noticeable problems and the ways to solve them.
+Remember when we discussed blocking and non-blocking I.O. in the past?
+Blocking I.O. servers create a thread per connection to parallelize request processing.
+While servers with non-blocking I.O. use a single thread to manage multiple connections.
+The model where we create thread per connection will scale poorly for long-lived connections.
+We should use non-blocking I.O. instead.
+Zool, for example, is based on Netty, a high-performance, non-blocking I.O. framework.
+Another problem is what to do with connections during web server restarts.
+For example, when we need to upgrade the server software.
+There are two common approaches for a graceful server shutdown.
+Either migrate connections to a new server without reconnecting clients.
+Or we can force clients to reconnect to a different server.
+While doing this, we should remember and avoid the thundering hurt problem.
+When many clients try to establish a new connection at the same time, causing a large spike in traffic for other servers.
+To avoid this, we should slowly disconnect clients, not all at once.
+Another important thing to clarify is that even though a single server can handle millions of connections,
+we shouldn't be doing this in a production environment.
+Meaning that we are better off using several small servers than one big server.
+Because when the server crashes, and we should always expect this when designing distributed systems,
+clients previously connected to a failed server will try to reconnect to other servers.
+It is much easier for the entire system to handle reconnecting thousands than reconnecting millions of clients.
+One last important thing I would like to mention is load balancing of WebSocket connections.
+Many distributed systems have a load balancer sitting between clients and servers.
+To evenly distribute connections among servers.
+When a WebSocket connection is established, both the client and server keep it open.
+Even when there are no requests pending.
+But older versions of popular load balancers do not have native support for WebSockets.
+And they cut the connection after some period of inactivity.
+Latest versions of many load balancers support WebSocket proxy natively.
+And connection drop is no longer an issue.
+Another option to deal with this problem is to run load balancer as a TCP load balancer at layer 4,
+instead of as an HTTP load balancer at layer 7.
+And if that last statement doesn't quite make sense to you right now, don't worry.
+We will discuss the topic of load balancing in detail later in the course.

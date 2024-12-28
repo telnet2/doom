@@ -1,0 +1,107 @@
+ In the last several videos we have talked about concepts that help create reliable communication.
+ Throughout the entire course I keep reminding you that while we demonstrate these concepts
+ using a messaging system design, these concepts are universal and you will find them in almost
+ every distributed system.
+ Let's continue talking about such concepts, but change tracks for a while to discuss performance
+ and scalability.
+ Now that we know how to deliver messages reliably, we also want to deliver them quickly.
+ And this is where compression and batching enters the stage.
+ Let's start with batching.
+ The idea of batching is very simple.
+ Instead of sending each request to message separately, we can group them together into
+ a single request.
+ How does this help?
+ There are many benefits.
+ First of all, batching increases throughput.
+ You know already that every request consumes resources.
+ Usually it is better to make fewer requests with more data, as opposed to making more
+ requests with less data.
+ No need to pass HTTP headers with every request, no need to establish multiple connections
+ and allocate memory resources for each one of them, no need to create multiple threads
+ to process requests, in assumption that the server is using the ThreadP request model.
+ Fewer requests also mean lower dollar costs.
+ This is particularly true for public cloud services with a pay-pay request pricing model.
+ The fewer requests we make, the less money we pay for using services.
+ One more advantage of sending less requests, less chance of being throttled. Services often
+ protect themselves from being abused by clients that send too many requests
+ in a short period of time.
+ More on this later in the course.
+ If botching brings so many benefits, we should always use it, right?
+ Let's not rush into conclusions.
+ Botching introduces complexity on both the client and server side. On the client side, we need to accumulate messages to club them together before sending
+ out.
+ One way to achieve this is to put messages into a buffer in memory, with an wait up to
+ several seconds before sending buffers content, or until the buffer fills up, whichever comes
+ first.
+ All this makes the client more complicated to implement and configure.
+ On the server side, things get more complicated as well.
+ When the batch request is processed, messages inside such requests are processed one by
+ one.
+ Let's say there are 10 messages in the request, the first 4 were successfully processed, the
+ fifth message has failed.
+ What should we do?
+ Continue processing the rest of messages?
+ Report back the failure for the whole request?
+ Maybe roll back already processed messages?
+ Not simple questions to answer.
+ It is so much easier when a single message per request is sent.
+ Because in case of a failure we always know which message failed and can easily retry
+ the entire request.
+ But let's try to answer these questions.
+ How does the server handle a bash request?
+ We have two options.
+ Either we treat the entire request as a single atomic unit, meaning that the request succeeds
+ only when all nested operations complete successfully, or we treat
+ each nested operation independently and report back failures for each individual operation.
+ In other words, the service processing such request tries to make as much progress as
+ possible.
+ The latter approach is more common in practice.
+ Let's now take a look at the format of the batch request.
+ Conceptually we have two options, we can batch multiple requests into a single call, or we
+ batch multiple resources into a single call.
+ The first option is to combine multiple HTTP requests into one standard HTTP request.
+ Think of it as simply a concatenation of individual requests.
+ We take several requests, each containing headers and body, and then batch them together
+ using some separator.
+ The server processes each nested request and returns a single standard HTTP response that
+ contains status codes for each individual request.
+ Many Google APIs support batching, and they follow this batch request format.
+ For example, take a look at the Google Drive batch API.
+ A specific example of the second approach is SQMS, which provides the SendMessageBatch
+ API to submit multiple messages to the specified queue.
+ With this approach we no longer concatenate individual requests, but we provide a list
+ of resources, messages in our case.
+ The service returns back a standard HTTP response that contains a list of results for each individual
+ message.
+ Each such result object in the list contains the identifier of the message and the status
+ of the action, whether the message was successfully enqueued
+ or not.
+ So, a batch request can result in a combination of successful and unsuccessful operations.
+ Let's now take a look at how the client handles a response with partial queries.
+ Three options are possible.
+ The client may choose to retry the entire batch request as is. And this is a perfectly valid option if each individual nested operation is an important.
+ The server will replay all nested operations one more time.
+ This will have no effect on previously succeeded operations, but failed operations will get
+ a chance to succeed.
+ The big advantage of this option is that it is easy to implement on the client side.
+ The second option is for the client to retry each failed operation individually.
+ The third option is to create another bash request that contains only failed operations.
+ The last two options require a bigger effort on the part of the client.
+ The client has to check for individual operation failures and create one or more new requests.
+ However, these two options do not require batch API to be a component.
+ As one specific example, let's take a look at the SQS batch API.
+ When retrieving messages from SQS, we can configure the pull request to return multiple
+ messages up to 10.
+ The consumer is not responsible for deleting successfully processed messages.
+ And SQS provides a batch API for this, DeleteMessageBatch API.
+ A list of message identifiers is specified in the request.
+ The response of the DeleteMessageBatch API contains status of the delete operation for
+ every message.
+ As you know already, fail to delete messages will not be removed from the queue and will
+ be retrieved by these or other consumers later, when visibility timeout expires on such messages.
+ So, the consumer has to scan through the DeleteMessageWatch response and check for individual message deletion
+ failures.
+ If at least one failure is identified, the consumer can use any of the three options mentioned above.
+ One last thing to mention on this topic, Kafka heavily relies on batching.
+ Both on the producer side, while sending messages to a broker, and on the consumer side, while retrieving messages.
+ Batching is one of the secrets that makes Kafka support a very high throughput.
